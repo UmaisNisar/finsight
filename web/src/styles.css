@@ -1,0 +1,305 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+
+/*
+  FinSight design tokens. Neutral, typography-led surfaces in the spirit of Apple's platform apps:
+  a soft grey canvas, white grouped surfaces, hairline separators and one accent colour.
+  Light values live on :root; dark values are redefined for the OS setting and for an explicit choice.
+*/
+:root {
+  color-scheme: light;
+  --canvas: #f5f5f7;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f2f2f4;
+  --glass: rgb(250 250 252 / 0.72);
+  --fill: rgb(118 118 128 / 0.12);
+  --fill-strong: rgb(118 118 128 / 0.2);
+  --separator: rgb(60 60 67 / 0.12);
+  --label: #1d1d1f;
+  --label-secondary: #6e6e73;
+  --label-tertiary: #8e8e93;
+  --accent: #0071e3;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgb(0 113 227 / 0.1);
+  --positive: #1b7f3b;
+  --positive-soft: rgb(36 138 61 / 0.1);
+  --attention: #b25000;
+  --attention-soft: rgb(255 149 0 / 0.12);
+  --critical: #c9252c;
+  --critical-soft: rgb(255 59 48 / 0.1);
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.04);
+  --shadow-float: 0 12px 40px rgb(0 0 0 / 0.12), 0 2px 6px rgb(0 0 0 / 0.06);
+
+  /* Chart series: validated categorical slots (CVD-safe adjacent order). */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-neutral: #aeaeb2;
+  --chart-grid: #ececef;
+  --chart-axis: #8e8e93;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --canvas: #000000;
+    --surface: #1c1c1e;
+    --surface-raised: #2c2c2e;
+    --surface-sunken: #111113;
+    --glass: rgb(28 28 30 / 0.72);
+    --fill: rgb(118 118 128 / 0.24);
+    --fill-strong: rgb(118 118 128 / 0.36);
+    --separator: rgb(84 84 88 / 0.5);
+    --label: #f5f5f7;
+    --label-secondary: #a1a1a6;
+    --label-tertiary: #8e8e93;
+    --accent: #2997ff;
+    --accent-contrast: #ffffff;
+    --accent-soft: rgb(41 151 255 / 0.16);
+    --positive: #30d158;
+    --positive-soft: rgb(48 209 88 / 0.14);
+    --attention: #ff9f0a;
+    --attention-soft: rgb(255 159 10 / 0.16);
+    --critical: #ff453a;
+    --critical-soft: rgb(255 69 58 / 0.16);
+    --shadow-soft: 0 0 0 1px rgb(255 255 255 / 0.04);
+    --shadow-float: 0 16px 48px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.06);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-neutral: #636366;
+    --chart-grid: #2c2c2e;
+    --chart-axis: #8e8e93;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #000000;
+  --surface: #1c1c1e;
+  --surface-raised: #2c2c2e;
+  --surface-sunken: #111113;
+  --glass: rgb(28 28 30 / 0.72);
+  --fill: rgb(118 118 128 / 0.24);
+  --fill-strong: rgb(118 118 128 / 0.36);
+  --separator: rgb(84 84 88 / 0.5);
+  --label: #f5f5f7;
+  --label-secondary: #a1a1a6;
+  --label-tertiary: #8e8e93;
+  --accent: #2997ff;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgb(41 151 255 / 0.16);
+  --positive: #30d158;
+  --positive-soft: rgb(48 209 88 / 0.14);
+  --attention: #ff9f0a;
+  --attention-soft: rgb(255 159 10 / 0.16);
+  --critical: #ff453a;
+  --critical-soft: rgb(255 69 58 / 0.16);
+  --shadow-soft: 0 0 0 1px rgb(255 255 255 / 0.04);
+  --shadow-float: 0 16px 48px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.06);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-neutral: #636366;
+  --chart-grid: #2c2c2e;
+  --chart-axis: #8e8e93;
+}
+
+@theme inline {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter Variable', 'Segoe UI', system-ui, sans-serif;
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-glass: var(--glass);
+  --color-fill: var(--fill);
+  --color-fill-strong: var(--fill-strong);
+  --color-separator: var(--separator);
+  --color-label: var(--label);
+  --color-label-secondary: var(--label-secondary);
+  --color-label-tertiary: var(--label-tertiary);
+  --color-accent: var(--accent);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-accent-soft: var(--accent-soft);
+  --color-positive: var(--positive);
+  --color-positive-soft: var(--positive-soft);
+  --color-attention: var(--attention);
+  --color-attention-soft: var(--attention-soft);
+  --color-critical: var(--critical);
+  --color-critical-soft: var(--critical-soft);
+  --shadow-soft: var(--shadow-soft);
+  --shadow-float: var(--shadow-float);
+  --radius-card: 20px;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--label);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.45;
+    letter-spacing: -0.005em;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
+
+  :focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    outline-offset: 2px;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: default;
+  }
+}
+
+@layer components {
+  .title-large {
+    font-size: clamp(1.75rem, 1.4rem + 1.2vw, 2.25rem);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+  }
+
+  .title-section {
+    font-size: 1.25rem;
+    font-weight: 650;
+    letter-spacing: -0.018em;
+    line-height: 1.2;
+  }
+
+  .figure-hero {
+    font-size: clamp(2.25rem, 1.6rem + 2.6vw, 3.5rem);
+    font-weight: 650;
+    letter-spacing: -0.035em;
+    line-height: 1;
+  }
+
+  .figure {
+    font-weight: 620;
+    letter-spacing: -0.022em;
+    line-height: 1.05;
+  }
+
+  .caption {
+    font-size: 0.8125rem;
+    color: var(--label-secondary);
+  }
+
+  .eyebrow {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--label-secondary);
+  }
+
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .glass {
+    background: var(--glass);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+  }
+
+  .hairline-b {
+    box-shadow: inset 0 -0.5px 0 var(--separator);
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Sheet entrance: from the right on wide screens, from the bottom on phones. */
+dialog.sheet[open] > div {
+  animation: sheet-up 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+dialog.sheet[open]::backdrop {
+  animation: fade-in 0.2s ease-out;
+}
+
+@media (min-width: 768px) {
+  dialog.sheet[open] > div {
+    animation-name: sheet-in;
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@layer components {
+  /* Denser glass for bars that content scrolls under, so labels stay legible without backdrop blur. */
+  .glass-strong {
+    background: color-mix(in srgb, var(--canvas) 94%, transparent);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+  }
+
+  /* Native selects keep platform behaviour; this adds the disclosure chevron appearance-none removes. */
+  select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238e8e93' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 9 5 5 5-5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    padding-right: 2rem !important;
+  }
+}

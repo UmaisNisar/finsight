@@ -16,3 +16,5 @@ TestResults/
 appsettings.Local.json
 .env
 .env.local
+
+server/FinSight.Api/wwwroot/
