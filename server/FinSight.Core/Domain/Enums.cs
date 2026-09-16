@@ -13,6 +13,9 @@ public enum StatementSourceKind
 {
     Gmail,
     ManualUpload,
+
+    /// <summary>Synthetic data generated for demo mode. No real document exists.</summary>
+    Demo,
 }
 
 public enum DocumentKind

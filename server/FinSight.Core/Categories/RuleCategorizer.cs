@@ -150,7 +150,15 @@ public static partial class RuleCategorizer
             return Income("income.freelance", 0.85, "Freelance or platform payout");
         }
 
-        // Housing and taxes are keyword-driven before merchants, because payees vary per person.
+        var refundWords = RefundWords().IsMatch(description);
+
+        // Known merchants first: "SONNET INSURANCE TENANT" is insurance, not rent.
+        if (MatchCatalog(MerchantCatalog.Merchants, input, refundWords) is { } merchantMatch)
+        {
+            return merchantMatch;
+        }
+
+        // Housing and taxes are keyword-driven, because payees vary per person.
         if (!inflow && Mortgage().IsMatch(description))
         {
             return Expense("housing.mortgage", 0.9, "Mortgage payment");
@@ -173,25 +181,9 @@ public static partial class RuleCategorizer
                 : Expense("other.cash", 0.9, "Cash withdrawal");
         }
 
-        var refundWords = RefundWords().IsMatch(description);
-
-        foreach (var entry in MerchantCatalog.Merchants.Concat(MerchantCatalog.Keywords))
+        if (MatchCatalog(MerchantCatalog.Keywords, input, refundWords) is { } keywordMatch)
         {
-            if (!entry.Regex.IsMatch(description))
-            {
-                continue;
-            }
-
-            var category = CategoryTaxonomy.Resolve(entry.CategoryId);
-            if (inflow && category.Kind == CategoryKind.Expense)
-            {
-                // Money back from a merchant you normally pay is a refund, which offsets spending.
-                return new CategorizationResult(entry.CategoryId, TransactionType.Expense, CategorySource.Rule,
-                    refundWords ? 0.95 : Math.Min(entry.Confidence, 0.8), IsRefund: true, "Refund from a known merchant");
-            }
-
-            return new CategorizationResult(entry.CategoryId, CategoryTaxonomy.ImpliedType(category, input.Amount),
-                CategorySource.Rule, entry.Confidence, IsRefund: false, entry.Merchant is null ? "Keyword match" : "Known merchant");
+            return keywordMatch;
         }
 
         if (PersonToPerson().IsMatch(description))
@@ -215,6 +207,26 @@ public static partial class RuleCategorizer
         }
 
         return new CategorizationResult(CategoryTaxonomy.Uncategorized, TransactionType.Expense, CategorySource.Default, 0.2, false, "No matching rule");
+
+        static CategorizationResult? MatchCatalog(IEnumerable<CatalogEntry> entries, CategorizationInput input, bool refundWords)
+        {
+            var entry = entries.FirstOrDefault(e => e.Regex.IsMatch(input.Description));
+            if (entry is null)
+            {
+                return null;
+            }
+
+            var category = CategoryTaxonomy.Resolve(entry.CategoryId);
+            if (input.Amount > 0 && category.Kind == CategoryKind.Expense)
+            {
+                // Money back from a merchant you normally pay is a refund, which offsets spending.
+                return new CategorizationResult(entry.CategoryId, TransactionType.Expense, CategorySource.Rule,
+                    refundWords ? 0.95 : Math.Min(entry.Confidence, 0.8), IsRefund: true, "Refund from a known merchant");
+            }
+
+            return new CategorizationResult(entry.CategoryId, CategoryTaxonomy.ImpliedType(category, input.Amount),
+                CategorySource.Rule, entry.Confidence, IsRefund: false, entry.Merchant is null ? "Keyword match" : "Known merchant");
+        }
 
         static CategorizationResult Transfer(string id, double confidence, string reason) =>
             new(id, TransactionType.Transfer, CategorySource.Rule, confidence, false, reason);
