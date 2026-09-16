@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/server/">
+    <Project Path="server/FinSight.Api/FinSight.Api.csproj" />
+    <Project Path="server/FinSight.Core/FinSight.Core.csproj" />
+    <Project Path="server/FinSight.Infrastructure/FinSight.Infrastructure.csproj" />
+    <Project Path="server/FinSight.Tests/FinSight.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,18 @@
+bin/
+obj/
+*.user
+.vs/
+.vscode/*
+!.vscode/extensions.json
+node_modules/
+web/dist/
+coverage/
+TestResults/
+# Local data: SQLite database, Data Protection keys, uploaded files. Never commit.
+.data/
+*.db
+*.db-shm
+*.db-wal
+appsettings.Local.json
+.env
+.env.local
