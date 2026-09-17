@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Job, Statement } from '@/api/schemas';
-import { JobsProvider, NOT_A_PDF_MESSAGE } from '@/app/providers/JobsProvider';
+import { JobsProvider, UNSUPPORTED_FILE_MESSAGE } from '@/app/providers/JobsProvider';
 import { alertGuidance, alertReadyLabel, GENERIC_DOWNLOAD_HINT, groupAlerts, isPdfFile, SEVERAL_PDFS_HINT } from '@/lib/statements';
 import { alert, CIBC_HINT } from '@/test/alerts';
 import { deferred, json, mockApi, renderWithApp } from '@/test/utils';
@@ -85,14 +85,14 @@ describe('Statement alert cards', () => {
     expect(link).toHaveAttribute('href', september.signInUrl);
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-    expect(within(cibcCard).getByRole('button', { name: 'Upload PDFs' })).toBeInTheDocument();
+    expect(within(cibcCard).getByRole('button', { name: 'Upload statements' })).toBeInTheDocument();
 
     const single = card('Tangerine chequing account ending 1020');
     expect(single).toHaveTextContent('Statement ready Sep 3');
     expect(single).toHaveTextContent(GENERIC_DOWNLOAD_HINT);
     expect(single).not.toHaveTextContent(SEVERAL_PDFS_HINT);
     expect(within(single).queryByRole('link')).not.toBeInTheDocument();
-    expect(within(single).getByRole('button', { name: 'Upload PDF' })).toBeInTheDocument();
+    expect(within(single).getByRole('button', { name: 'Upload statement' })).toBeInTheDocument();
   });
 
   it('uploads into the alert itself when the account has one statement waiting', async () => {
@@ -146,7 +146,7 @@ describe('Statement alert cards', () => {
     const target = card('CIBC credit card ending 5190');
     pick(target, [new File(['x'], 'screenshot.png', { type: 'image/png' })]);
     await waitFor(() => expect(rows(target)).toEqual(['screenshot.png:failed']));
-    expect(target).toHaveTextContent(NOT_A_PDF_MESSAGE);
+    expect(target).toHaveTextContent(UNSUPPORTED_FILE_MESSAGE);
     expect(uploads()).toHaveLength(0);
   });
 
@@ -155,9 +155,9 @@ describe('Statement alert cards', () => {
     const target = card('Tangerine chequing account ending 1020');
     const dataTransfer = { types: ['Files'], files: [pdf('dropped.pdf')], dropEffect: 'none' };
     act(() => fireEvent.dragEnter(target, { dataTransfer }));
-    expect(within(target).getByText('Drop PDFs to upload').parentElement).toHaveClass('opacity-100');
+    expect(within(target).getByText('Drop files to upload').parentElement).toHaveClass('opacity-100');
     act(() => fireEvent.drop(target, { dataTransfer }));
-    expect(within(target).getByText('Drop PDFs to upload').parentElement).toHaveClass('opacity-0');
+    expect(within(target).getByText('Drop files to upload').parentElement).toHaveClass('opacity-0');
     await waitFor(() => expect(uploads()).toHaveLength(1));
     expect((uploads()[0]?.get('file') as File).name).toBe('dropped.pdf');
   });

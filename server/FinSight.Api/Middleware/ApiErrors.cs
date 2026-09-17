@@ -38,6 +38,8 @@ public static class ApiErrors
         AnalysisUnavailableException { Reason: AnalysisUnavailableReason.NotConfigured } or AiUnavailableException { Failure: AiFailure.NotConfigured } =>
             Problem(StatusCodes.Status503ServiceUnavailable, "ai_not_configured", "AI analysis isn't set up on this server. Your transaction data is still available."),
         AnalysisUnavailableException { Reason: AnalysisUnavailableReason.NotEnoughData } => Problem(StatusCodes.Status422UnprocessableEntity, "not_enough_data", "There are no transactions in this period to analyze."),
+        AiUnavailableException { Failure: AiFailure.KeyRefused } => Problem(StatusCodes.Status503ServiceUnavailable, "ai_key_refused", "Google refused the Gemini key. Update it in Settings."),
+        AiUnavailableException { Failure: AiFailure.LimitReached } => Problem(StatusCodes.Status429TooManyRequests, "ai_limit_reached", "Today's AI allowance is used up. It resets tomorrow."),
         AiUnavailableException { Failure: AiFailure.RateLimited } => Problem(StatusCodes.Status429TooManyRequests, "ai_rate_limited", "AI analysis is busy right now. Try again in a minute."),
         AiUnavailableException => Problem(StatusCodes.Status503ServiceUnavailable, "ai_unavailable", "AI analysis is temporarily unavailable. Your transaction data is still available."),
         // Thrown by the server while reading the body, for example past a request size limit.

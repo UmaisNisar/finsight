@@ -1,0 +1,44 @@
+# Keep the build context small and free of local state and secrets. The Dockerfile builds the web app and the API itself.
+
+# Version control and editor state
+.git
+.gitattributes
+.github
+.vs
+.vscode
+*.user
+
+# Build output and dependencies
+**/bin
+**/obj
+**/node_modules
+web/dist
+server/FinSight.Api/wwwroot
+coverage
+TestResults
+artifacts
+
+# Local data: SQLite databases, Data Protection key rings, uploads
+**/.data
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+**/appsettings.Local.json
+**/secrets.json
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Not needed to build the image
+server/FinSight.Tests
+docs
+*.md
+docker-compose*.yml
+Dockerfile
+.dockerignore

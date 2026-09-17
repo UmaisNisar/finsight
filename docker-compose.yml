@@ -1,0 +1,82 @@
+# A local, production-like FinSight: the app image (Production environment) and PostgreSQL.
+#
+#   cp .env.example .env        # then fill in the values you need
+#   docker compose up --build   # http://localhost:8080
+#
+# Set FINSIGHT_IMAGE in .env to run a published image (ghcr.io/umaisnisar/finsight:latest) instead of building.
+# See "Deployment" in README.md for running it on a real host behind TLS.
+
+name: finsight
+
+services:
+  app:
+    image: ${FINSIGHT_IMAGE:-finsight:local}
+    build:
+      context: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${FINSIGHT_PORT:-8080}:8080"
+    environment:
+      Database__Provider: Postgres
+      ConnectionStrings__FinSight: "Host=postgres;Port=5432;Database=finsight;Username=finsight;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+      Database__MigrateOnStartup: "true"
+
+      # Key ring on the data volume. Production: mount a PKCS#12 certificate and set its path and password.
+      DataProtection__KeysPath: /data/keys
+      DataProtection__CertificatePath: ${DATAPROTECTION_CERTIFICATE_PATH:-}
+      DataProtection__CertificatePassword: ${DATAPROTECTION_CERTIFICATE_PASSWORD:-}
+      DataProtection__AllowUnprotectedKeys: ${DATAPROTECTION_ALLOW_UNPROTECTED_KEYS:-false}
+
+      App__PublicUrl: ${APP_PUBLIC_URL:-http://localhost:8080}
+      AllowedHosts: ${ALLOWED_HOSTS:-localhost;127.0.0.1}
+      # true only behind a reverse proxy that terminates TLS and sets X-Forwarded-For/-Proto (and the app isn't reachable directly).
+      ForwardedHeaders__Enabled: ${FORWARDED_HEADERS_ENABLED:-false}
+
+      Google__ClientId: ${GOOGLE_CLIENT_ID:-}
+      Google__ClientSecret: ${GOOGLE_CLIENT_SECRET:-}
+      Gemini__ApiKey: ${GEMINI_API_KEY:-}
+
+      Email__From: ${EMAIL_FROM:-}
+      Email__Smtp__Host: ${SMTP_HOST:-}
+      Email__Smtp__Port: ${SMTP_PORT:-587}
+      Email__Smtp__Username: ${SMTP_USERNAME:-}
+      Email__Smtp__Password: ${SMTP_PASSWORD:-}
+
+      Demo__Enabled: ${DEMO_ENABLED:-false}
+    volumes:
+      - finsight-data:/data
+      # Uncomment to provide the key ring certificate (and set DATAPROTECTION_CERTIFICATE_PATH=/run/secrets/keyring.pfx).
+      # - ./secrets/keyring.pfx:/run/secrets/keyring.pfx:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    # No healthcheck here: the chiseled image has no shell or curl. Probe http://localhost:8080/health/ready from outside.
+
+  postgres:
+    image: postgres:17-bookworm@sha256:051f7b7b3abdd564d5d1bd1e8c4b9c1b6e77087d1dd22020ede611c096a272e0
+    environment:
+      POSTGRES_DB: finsight
+      POSTGRES_USER: finsight
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finsight -d finsight"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    # Not published on the host. Uncomment to connect with psql or a backup tool from the host.
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+volumes:
+  finsight-data:
+  postgres-data:

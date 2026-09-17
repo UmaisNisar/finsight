@@ -2,6 +2,7 @@ using System.Globalization;
 using FinSight.Core.Abstractions;
 using FinSight.Core.Analytics;
 using FinSight.Core.Domain;
+using FinSight.Core.Import;
 using FinSight.Core.Statements;
 using FinSight.Infrastructure.Gmail;
 using FinSight.Infrastructure.Insights;
@@ -16,6 +17,16 @@ public static class StatementLabels
     public static string Title(Statement statement)
     {
         var culture = CultureInfo.InvariantCulture;
+
+        // A CSV or OFX download covers whatever dates the user picked, not a statement month: "CSV import · Aug 1 – Aug 31, 2026",
+        // or just the dates when the bank is known (it is shown beside the title).
+        if (statement.Format is StatementFileFormat.Csv or StatementFileFormat.Ofx or StatementFileFormat.Qfx
+            && statement.PeriodStart is { } from && statement.PeriodEnd is { } to)
+        {
+            var range = DateRange(from, to);
+            return statement.Institution is null ? $"{StatementFileParsers.DisplayName(statement.Format.Value)} import · {range}" : range;
+        }
+
         if (statement.PeriodEnd is { } end)
         {
             return end.ToString("MMMM yyyy", culture);
@@ -29,6 +40,20 @@ public static class StatementLabels
         return statement.ReceivedAt is { } received
             ? $"Received {received.ToString("MMM d, yyyy", culture)}"
             : statement.Filename;
+    }
+
+    /// <summary>"Aug 1 – Aug 31, 2026", "Dec 3, 2025 – Jan 2, 2026" or "Aug 15, 2026".</summary>
+    public static string DateRange(DateOnly from, DateOnly to)
+    {
+        var culture = CultureInfo.InvariantCulture;
+        if (from == to)
+        {
+            return to.ToString("MMM d, yyyy", culture);
+        }
+
+        return from.Year == to.Year
+            ? $"{from.ToString("MMM d", culture)} – {to.ToString("MMM d, yyyy", culture)}"
+            : $"{from.ToString("MMM d, yyyy", culture)} – {to.ToString("MMM d, yyyy", culture)}";
     }
 
     /// <summary>"CIBC credit card ending 5190", falling back to "CIBC statement", "Credit card ending 5190" or "Statement".</summary>
@@ -102,7 +127,6 @@ public sealed partial class JobRunner(
     StatementImportService importer,
     CategorizationService categorization,
     AnalysisService analysis,
-    IGeminiService gemini,
     TimeProvider time,
     ILogger<JobRunner> logger)
 {
@@ -164,15 +188,15 @@ public sealed partial class JobRunner(
 
             try
             {
-                var bytes = await ObtainPdfAsync(item, statement, reporter, key, label, cancellationToken);
-                if (bytes is null)
+                var file = await ObtainFileAsync(item, statement, reporter, key, label, cancellationToken);
+                if (file is null)
                 {
-                    await reporter.SetAsync(key, label, StepStatus.Failed, StatementFailure.Message(statement.FailureCode), cancellationToken);
+                    await reporter.FailStepAsync(key, label, statement.FailureCode, cancellationToken);
                     continue;
                 }
 
                 await reporter.SetAsync(key, label, StepStatus.Running, "Reading statement", cancellationToken);
-                var result = await importer.ImportAsync(statement, bytes, user.Settings.Currency, cancellationToken);
+                var result = await importer.ImportAsync(statement, file.Content, user.Settings.Currency, cancellationToken, file.Password);
 
                 label = StatementLabels.StepLabel(statement);
                 switch (result.Outcome)
@@ -181,7 +205,7 @@ public sealed partial class JobRunner(
                         imported.Add(statement);
                         var detail = $"{result.TransactionCount} transaction{(result.TransactionCount == 1 ? "" : "s")}";
 
-                        // Uploading the PDF a statement alert asked for clears that alert.
+                        // Uploading the statement a statement alert asked for clears that alert.
                         if (item.Kind == JobKind.Upload && statement.Source == StatementSourceKind.ManualUpload
                             && await importer.FulfilAlertAsync(statement, cancellationToken) is not null)
                         {
@@ -194,7 +218,7 @@ public sealed partial class JobRunner(
                         await reporter.SetAsync(key, label, StepStatus.Skipped, "Already imported", cancellationToken);
                         break;
                     default:
-                        await reporter.SetAsync(key, label, StepStatus.Failed, StatementFailure.Message(result.FailureCode), cancellationToken);
+                        await reporter.FailStepAsync(key, label, result.FailureCode, cancellationToken);
                         break;
                 }
             }
@@ -217,7 +241,7 @@ public sealed partial class JobRunner(
                 }
 
                 await importer.FailAsync(fresh, StatementFailure.Unexpected, CancellationToken.None);
-                await reporter.SetAsync(key, label, StepStatus.Failed, StatementFailure.Message(StatementFailure.Unexpected), CancellationToken.None);
+                await reporter.FailStepAsync(key, label, StatementFailure.Unexpected, CancellationToken.None);
             }
         }
 
@@ -225,7 +249,7 @@ public sealed partial class JobRunner(
         await GenerateInsightsAsync(user, imported, reporter, cancellationToken);
     }
 
-    private async Task<byte[]?> ObtainPdfAsync(JobWorkItem item, Statement statement, JobReporter reporter, string key, string label, CancellationToken cancellationToken)
+    private async Task<UploadedFile?> ObtainFileAsync(JobWorkItem item, Statement statement, JobReporter reporter, string key, string label, CancellationToken cancellationToken)
     {
         if (item.Uploads?.TryGetValue(statement.Id, out var uploaded) == true)
         {
@@ -245,7 +269,7 @@ public sealed partial class JobRunner(
 
         try
         {
-            return await discovery.DownloadAsync(item.UserId, statement, cancellationToken);
+            return new UploadedFile(await discovery.DownloadAsync(item.UserId, statement, cancellationToken));
         }
         catch (FileNotFoundException)
         {
@@ -301,9 +325,10 @@ public sealed partial class JobRunner(
 
     private async Task GenerateInsightsAsync(User user, List<Statement> imported, JobReporter reporter, CancellationToken cancellationToken)
     {
-        if (imported.Count == 0 || !user.Settings.AiInsightsEnabled || !await gemini.IsConfiguredAsync(cancellationToken))
+        // Without Gemini (no key, key refused, quota or limit used up) the analysis is written by FinSight instead (AnalysisService).
+        if (imported.Count == 0 || !user.Settings.AiInsightsEnabled)
         {
-            var reason = imported.Count == 0 ? "No new data" : !user.Settings.AiInsightsEnabled ? "AI insights are turned off" : "AI not configured";
+            var reason = imported.Count == 0 ? "No new data" : "AI insights are turned off";
             await reporter.SetAsync("insights", "Generating insights", StepStatus.Skipped, reason, cancellationToken);
             return;
         }
@@ -328,8 +353,9 @@ public sealed partial class JobRunner(
 
         try
         {
-            await analysis.GenerateAsync(range, cancellationToken);
-            await reporter.SetAsync("insights", "Insights ready", StepStatus.Done, range.Label(), cancellationToken);
+            var stored = await analysis.GenerateAsync(range, cancellationToken);
+            var detail = stored.Source == AnalysisSource.BuiltIn ? $"{range.Label()} · written without AI" : range.Label();
+            await reporter.SetAsync("insights", "Insights ready", StepStatus.Done, detail, cancellationToken);
         }
         catch (Exception ex) when (ex is AiUnavailableException or AnalysisUnavailableException)
         {

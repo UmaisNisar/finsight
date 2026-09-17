@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { FileText, RotateCw, Trash2, Upload } from 'lucide-react';
-import { useRef, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { errorMessage } from '@/api/client';
 import { api } from '@/api/endpoints';
 import { useInvalidateFinancialData, useStatement } from '@/api/queries';
@@ -8,6 +8,9 @@ import type { Statement } from '@/api/schemas';
 import { useConfirm } from '@/app/providers/ConfirmProvider';
 import { useJobs } from '@/app/providers/JobsProvider';
 import { useToast } from '@/app/providers/ToastProvider';
+import { PdfPasswordPrompt } from '@/components/PdfPasswordPrompt';
+import { useStatementFilePicker } from '@/components/UploadProgressList';
+import { Collapse } from '@/components/ui/AutoHeight';
 import { Button } from '@/components/ui/Button';
 import { Sheet } from '@/components/ui/Sheet';
 import { ErrorState, Skeleton } from '@/components/ui/primitives';
@@ -16,6 +19,7 @@ import { useSingleFlight } from '@/hooks/useSingleFlight';
 import { CategoryGlyph } from '@/lib/categories';
 import { cn } from '@/lib/cn';
 import { accountLabel, formatDate, formatMoney } from '@/lib/format';
+import { formatLabel, needsPassword, STATEMENT_FILE_ACCEPT } from '@/lib/statements';
 import { StatusPill } from './StatusPill';
 
 const ACCOUNT_TYPE: Record<Statement['accountType'], string> = {
@@ -76,6 +80,16 @@ function StatementSheet({ statementId, open, dateFormat, currency, onClose }: { 
   const fileInput = useRef<HTMLInputElement>(null);
   const once = useSingleFlight();
 
+  // A locked PDF is unlocked by sending its file again with the password, through the upload queue. The file is the one
+  // uploaded this visit when it's still held, or one the user chooses again (after a reload nothing is kept).
+  const unlockScope = `statement:${statementId}`;
+  const unlockUploads = jobs.uploads.filter((item) => item.scope === unlockScope);
+  const unlockItem = unlockUploads[unlockUploads.length - 1];
+  const unlocking = unlockItem !== undefined && unlockItem.state !== 'done' && unlockItem.state !== 'failed';
+  const unlockFailedAgain = unlockItem?.state === 'failed' && needsPassword(unlockItem.failureCode);
+  const [chosenFile, setChosenFile] = useState<File | null>(null);
+  const choosePdf = useStatementFilePicker((files) => setChosenFile(files[0] ?? null), { multiple: false, accept: '.pdf,application/pdf' });
+
   const reprocess = useMutation({
     mutationFn: (id: string) => api.processStatements([id]),
     onSuccess: ({ jobId }) => {
@@ -104,6 +118,11 @@ function StatementSheet({ statementId, open, dateFormat, currency, onClose }: { 
   const data = detail.data;
   const statement = data?.statement;
   const actionError = reprocess.error ?? reupload.error ?? remove.error;
+  const locked = statement !== undefined && ((statement.status === 'failed' && needsPassword(statement.failureCode)) || unlocking || unlockFailedAgain);
+  const unlockFile = chosenFile ?? (statement ? jobs.heldFileFor(statement.id) : null);
+  const wrongPassword = unlockItem?.state === 'failed' ? unlockItem.failureCode === 'pdf_password_incorrect' : statement?.failureCode === 'pdf_password_incorrect';
+  const unlockError = unlockItem?.state === 'failed' && !needsPassword(unlockItem.failureCode) ? unlockItem.message : null;
+  const format = statement ? formatLabel(statement.format) : null;
 
   return (
     <Sheet
@@ -139,7 +158,7 @@ function StatementSheet({ statementId, open, dateFormat, currency, onClose }: { 
                   <input
                     ref={fileInput}
                     type="file"
-                    accept="application/pdf,.pdf"
+                    accept={STATEMENT_FILE_ACCEPT}
                     className="sr-only"
                     tabIndex={-1}
                     aria-hidden="true"
@@ -173,6 +192,7 @@ function StatementSheet({ statementId, open, dateFormat, currency, onClose }: { 
         <ErrorState message={errorMessage(detail.error)} onRetry={() => void detail.refetch()} />
       ) : (
         <div className="fade-in space-y-6">
+          {choosePdf.input}
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill status={statement.status} />
             {statement.extractionConfidence !== null && statement.status === 'processed' && (
@@ -180,11 +200,36 @@ function StatementSheet({ statementId, open, dateFormat, currency, onClose }: { 
             )}
           </div>
 
-          {statement.failureMessage && (
+          {statement.failureMessage && !locked && (
             <p role="alert" className="rounded-2xl bg-critical-soft px-4 py-3 text-[0.9375rem] text-critical">
               {statement.failureMessage}
             </p>
           )}
+
+          <Collapse open={locked}>
+            <div className="card grouped rounded-[20px] px-4 py-3.5">
+              <PdfPasswordPrompt
+                incorrect={wrongPassword}
+                busy={unlocking}
+                fileMissing={!unlockFile}
+                onChooseFile={choosePdf.open}
+                onUnlock={async (password) => {
+                  if (unlockFile) await jobs.uploadFiles([unlockFile], { scope: unlockScope, statementId: statement.id, password });
+                }}
+              />
+              {unlockFile && chosenFile && (
+                <p className="caption mt-2 flex items-center gap-1.5">
+                  <FileText size={13} aria-hidden="true" className="shrink-0 text-label-tertiary" />
+                  <span className="truncate">{chosenFile.name}</span>
+                </p>
+              )}
+              {unlockError && (
+                <p role="alert" className="fade-in mt-2 text-[0.875rem] text-critical">
+                  {unlockError}
+                </p>
+              )}
+            </div>
+          </Collapse>
 
           {data.warnings.length > 0 && (
             <ul className="space-y-1.5 rounded-2xl bg-attention-soft px-4 py-3 text-[0.875rem]">
@@ -223,6 +268,7 @@ function StatementSheet({ statementId, open, dateFormat, currency, onClose }: { 
                   {statement.filename}
                 </span>
               </Row>
+              {format && <Row label="Format">{format}</Row>}
             </dl>
             {data.detectionReasons.length > 0 && statement.source === 'gmail' && (
               <p className="caption mt-2 px-1">

@@ -136,3 +136,28 @@ export function isPdfFile(file: File): boolean {
   if (file.type === 'application/pdf' || file.type === 'application/x-pdf') return true;
   return (file.type === '' || file.type === 'application/octet-stream') && /\.pdf$/i.test(file.name);
 }
+
+/** What file pickers offer: PDF statements, and CSV, OFX and QFX transaction downloads. */
+export const STATEMENT_FILE_ACCEPT = '.pdf,.csv,.ofx,.qfx,application/pdf,text/csv';
+
+export const UNSUPPORTED_FILE_MESSAGE = 'FinSight reads PDF, CSV, OFX and QFX files. Download one of those from your bank.';
+
+/**
+ * A file FinSight can read: a PDF, or a CSV, OFX or QFX download. Judged by name, because browsers report these types
+ * inconsistently (a CSV is often "application/vnd.ms-excel" on Windows, an OFX file has no type at all). The server
+ * checks the content itself.
+ */
+export function isStatementFile(file: File): boolean {
+  return isPdfFile(file) || /\.(pdf|csv|ofx|qfx)$/i.test(file.name);
+}
+
+/** Failure codes a password fixes. */
+export const PASSWORD_FAILURE_CODES = ['pdf_password_protected', 'pdf_password_incorrect'] as const;
+
+export const needsPassword = (code: string | null | undefined) => (PASSWORD_FAILURE_CODES as readonly (string | null | undefined)[]).includes(code);
+
+/** "PDF", "CSV", "OFX" or "QFX (Quicken)", for a statement's details. */
+export function formatLabel(format: Statement['format']): string | null {
+  if (!format) return null;
+  return format === 'qfx' ? 'QFX (Quicken)' : format.toUpperCase();
+}

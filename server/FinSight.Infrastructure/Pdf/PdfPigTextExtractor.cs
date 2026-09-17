@@ -19,6 +19,7 @@ namespace FinSight.Infrastructure.Pdf;
 /// PDFs come from strangers, so parsing is bounded: at most <see cref="MaxPages"/> pages are read, compressed streams may
 /// expand to at most <paramref name="maxDecodedBytes"/> in total (a small file can otherwise inflate to gigabytes), and
 /// parsing stops after <paramref name="timeout"/>. A file that exceeds a limit is reported as unreadable.
+/// <para>A password, when given, is passed to PdfPig for this one read and is not kept by the extractor.</para>
 /// </remarks>
 public sealed class PdfPigTextExtractor(long maxDecodedBytes = PdfPigTextExtractor.DefaultMaxDecodedBytes, TimeSpan? timeout = null) : IPdfTextExtractor
 {
@@ -42,7 +43,7 @@ public sealed class PdfPigTextExtractor(long maxDecodedBytes = PdfPigTextExtract
                 SkipMissingFonts = true,
                 FilterProvider = new BudgetedFilterProvider(DefaultFilterProvider.Instance, budget),
             };
-            if (password is not null)
+            if (!string.IsNullOrEmpty(password))
             {
                 parsingOptions.Password = password;
             }
@@ -71,16 +72,20 @@ public sealed class PdfPigTextExtractor(long maxDecodedBytes = PdfPigTextExtract
 
             return new PdfTextDocument(pages);
         }
-        catch (PdfDocumentEncryptedException ex)
+        catch (PdfDocumentEncryptedException ex) when (string.IsNullOrEmpty(password))
         {
             throw new PdfPasswordRequiredException("The PDF is password protected.", ex);
+        }
+        catch (PdfDocumentEncryptedException ex)
+        {
+            throw new PdfPasswordIncorrectException("The password doesn't open the PDF.", ex);
         }
         catch (Exception) when (budget.IsCancelled)
         {
             cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
-        catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException or PdfPasswordRequiredException))
+        catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException or PdfPasswordRequiredException or PdfPasswordIncorrectException))
         {
             // PdfPig throws many exception types for malformed files; any of them means "not a readable PDF".
             throw new PdfUnreadableException(budget.IsExceeded ? "The PDF is too large or complex to read." : "The PDF could not be read.", ex);

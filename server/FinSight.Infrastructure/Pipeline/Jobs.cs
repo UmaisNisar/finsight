@@ -6,12 +6,48 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FinSight.Infrastructure.Pipeline;
 
-/// <param name="Uploads">PDF bytes for manual uploads, held in memory only for the life of the job.</param>
-public sealed record JobWorkItem(Guid JobId, Guid UserId, JobKind Kind, IReadOnlyList<Guid> StatementIds, IReadOnlyDictionary<Guid, byte[]>? Uploads = null);
+/// <param name="Uploads">Uploaded files by statement, held in memory only for the life of the job and cleared when it ends.</param>
+public sealed record JobWorkItem(Guid JobId, Guid UserId, JobKind Kind, IReadOnlyList<Guid> StatementIds, IReadOnlyDictionary<Guid, UploadedFile>? Uploads = null)
+{
+    /// <summary>Wipes every upload's bytes and drops its password. Called when the job ends, however it ends.</summary>
+    public void ClearUploads()
+    {
+        foreach (var upload in Uploads?.Values ?? [])
+        {
+            upload.Clear();
+        }
+    }
+}
+
+/// <summary>
+/// One uploaded statement file and, for a password-protected PDF, the password to open it with. Lives only in memory, only
+/// until its job ends: <see cref="Clear"/> zeroes the bytes and drops the password. Neither is ever serialized, logged
+/// (<see cref="ToString"/> shows the size only) or stored.
+/// </summary>
+public sealed class UploadedFile(byte[] content, string? password = null)
+{
+    /// <summary>The bytes reserved against the server's upload memory budget. Unchanged by clearing, so the reservation is released in full.</summary>
+    public long ReservedBytes { get; } = content.LongLength;
+
+    public byte[] Content { get; private set; } = content;
+
+    public string? Password { get; private set; } = string.IsNullOrEmpty(password) ? null : password;
+
+    public void Clear()
+    {
+        Array.Clear(Content);
+        Content = [];
+
+        // .NET strings can't be wiped in place; dropping the only reference lets the garbage collector reclaim it.
+        Password = null;
+    }
+
+    public override string ToString() => $"UploadedFile({ReservedBytes} bytes)";
+}
 
 /// <summary>In-process work queue. Job state is persisted, so the UI can poll it; payloads are not.</summary>
 /// <param name="maxQueuedUploadBytes">
-/// Uploaded PDFs wait in memory until they are processed. This caps their total across all users, so many large uploads
+/// Uploaded files wait in memory until they are processed. This caps their total across all users, so many large uploads
 /// can't exhaust the server's memory.
 /// </param>
 public sealed class JobQueue(long maxQueuedUploadBytes = JobQueue.DefaultMaxQueuedUploadBytes)
@@ -45,7 +81,7 @@ public sealed class JobQueue(long maxQueuedUploadBytes = JobQueue.DefaultMaxQueu
 
     public void ReleaseUploadBytes(long bytes) => Interlocked.Add(ref _queuedUploadBytes, -bytes);
 
-    public static long UploadBytesOf(JobWorkItem item) => item.Uploads?.Values.Sum(b => (long)b.Length) ?? 0;
+    public static long UploadBytesOf(JobWorkItem item) => item.Uploads?.Values.Sum(u => u.ReservedBytes) ?? 0;
 }
 
 public static class JobSteps
@@ -105,6 +141,23 @@ public sealed class JobReporter(FinSightDbContext db, Guid jobId, TimeProvider t
     {
         var index = _steps.FindIndex(s => s.Key == key);
         var step = new JobStep(key, label, status, detail);
+        if (index >= 0)
+        {
+            _steps[index] = step;
+        }
+        else
+        {
+            _steps.Add(step);
+        }
+
+        return FlushAsync(null, null, cancellationToken);
+    }
+
+    /// <summary>Marks a statement's step failed with the failure's message and its code, so the UI can offer the right fix.</summary>
+    public Task FailStepAsync(string key, string label, string? failureCode, CancellationToken cancellationToken)
+    {
+        var index = _steps.FindIndex(s => s.Key == key);
+        var step = new JobStep(key, label, StepStatus.Failed, StatementFailure.Message(failureCode), failureCode);
         if (index >= 0)
         {
             _steps[index] = step;

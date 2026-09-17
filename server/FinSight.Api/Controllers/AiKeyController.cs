@@ -1,9 +1,11 @@
 using FinSight.Api.Auth;
 using FinSight.Api.Contracts;
 using FinSight.Api.Middleware;
+using FinSight.Core.Abstractions;
 using FinSight.Core.Domain;
 using FinSight.Infrastructure.Gemini;
 using FinSight.Infrastructure.Persistence;
+using FinSight.Infrastructure.Pipeline;
 using FinSight.Infrastructure.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -21,7 +23,7 @@ namespace FinSight.Api.Controllers;
 [Authorize]
 [ApiController]
 [Route("api/ai/key")]
-public sealed class AiKeyController(FinSightDbContext db, IOptions<GeminiOptions> options) : ControllerBase
+public sealed class AiKeyController(FinSightDbContext db, IOptions<GeminiOptions> options, AiKeyHealth keyHealth) : ControllerBase
 {
     private const int MinKeyLength = 20;
     private const int MaxKeyLength = 200;
@@ -33,7 +35,8 @@ public sealed class AiKeyController(FinSightDbContext db, IOptions<GeminiOptions
     [HttpPut]
     [EnableRateLimiting(RateLimits.AiKey)]
     public async Task<ActionResult<AiKeyStatusDto>> Save(
-        SaveAiKeyRequest request, [FromServices] GeminiKeyValidator validator, [FromServices] IApiKeyProtector protector, CancellationToken cancellationToken)
+        SaveAiKeyRequest request, [FromServices] GeminiKeyValidator validator, [FromServices] IApiKeyProtector protector,
+        [FromServices] PendingCategorizationRetry pendingRetry, CancellationToken cancellationToken)
     {
         if (User.IsDemoUser())
         {
@@ -50,8 +53,8 @@ public sealed class AiKeyController(FinSightDbContext db, IOptions<GeminiOptions
         {
             case GeminiKeyCheck.Rejected:
                 return ApiErrors.BadRequest("invalid_api_key", "Google didn't accept that key. Check you copied the whole key.");
-            case GeminiKeyCheck.RateLimited:
-                return ApiErrors.Problem(StatusCodes.Status429TooManyRequests, "rate_limited", "Google is limiting requests for this key right now. Wait a minute and try again.");
+            case GeminiKeyCheck.ServiceDisabled:
+                return ApiErrors.BadRequest("invalid_api_key", "That key belongs to a project without the Gemini API switched on. Create the key in Google AI Studio instead.");
             case GeminiKeyCheck.Unavailable:
                 return ApiErrors.Problem(StatusCodes.Status503ServiceUnavailable, "ai_unavailable", "We couldn't reach Google to check the key. Try again in a moment.");
         }
@@ -60,6 +63,10 @@ public sealed class AiKeyController(FinSightDbContext db, IOptions<GeminiOptions
         user.EncryptedGeminiApiKey = protector.Protect(apiKey);
         user.GeminiApiKeyHint = apiKey[^4..];
         await db.SaveChangesAsync(cancellationToken);
+        keyHealth.Clear(user.Id);
+
+        // Merchants left uncategorized while AI was unavailable get another go with the new key, in the background.
+        pendingRetry.Request(user.Id);
         return ToDto(user);
     }
 
@@ -75,14 +82,26 @@ public sealed class AiKeyController(FinSightDbContext db, IOptions<GeminiOptions
         user.EncryptedGeminiApiKey = null;
         user.GeminiApiKeyHint = null;
         await db.SaveChangesAsync(cancellationToken);
+        keyHealth.Clear(user.Id);
         return NoContent();
     }
 
-    private AiKeyStatusDto ToDto(User user) => new(
-        user.EncryptedGeminiApiKey is not null,
-        user.EncryptedGeminiApiKey is not null && user.GeminiApiKeyHint is not null ? "…" + user.GeminiApiKeyHint : null,
-        options.Value.IsConfigured,
-        options.Value.Model);
+    private AiKeyStatusDto ToDto(User user)
+    {
+        var failure = keyHealth.Get(user.Id);
+        return new(
+            user.EncryptedGeminiApiKey is not null,
+            user.EncryptedGeminiApiKey is not null && user.GeminiApiKeyHint is not null ? "…" + user.GeminiApiKeyHint : null,
+            options.Value.IsConfigured,
+            options.Value.Model,
+            failure?.Failure switch
+            {
+                AiFailure.KeyRefused => "key_refused",
+                AiFailure.RateLimited => "quota_exhausted",
+                _ => null,
+            },
+            failure?.At);
+    }
 
     private static ObjectResult DemoMode() =>
         ApiErrors.Problem(StatusCodes.Status403Forbidden, "demo_mode", "Demo mode uses the server's AI setup. Sign in with Google to add your own Gemini key.");

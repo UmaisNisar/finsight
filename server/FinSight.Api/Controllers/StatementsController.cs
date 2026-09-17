@@ -2,6 +2,7 @@ using FinSight.Api.Auth;
 using FinSight.Api.Contracts;
 using FinSight.Api.Middleware;
 using FinSight.Core.Domain;
+using FinSight.Core.Import;
 using FinSight.Core.Statements;
 using FinSight.Infrastructure.Gmail;
 using FinSight.Infrastructure.Insights;
@@ -23,6 +24,7 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
     private const int MaxStatementsPerJob = 60;
     private const long MaxUploadBytes = 20 * 1024 * 1024;
     private const int MaxPendingUploads = 30;
+    private const int MaxPasswordLength = 256;
 
     [HttpGet]
     public async Task<IReadOnlyList<StatementDto>> List(CancellationToken cancellationToken)
@@ -127,9 +129,11 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
         Process(new ProcessStatementsRequest([id]), cancellationToken);
 
     /// <summary>
-    /// Manual upload through the same pipeline. The PDF is processed in memory and never written to disk.
-    /// Pass <c>statementId</c> to re-upload the file for an existing statement, or to supply the PDF a statement alert asked for.
+    /// Manual upload through the same pipeline: a PDF statement, or a CSV, OFX or QFX transaction download, detected from the
+    /// file's content. The file is processed in memory and never written to disk.
+    /// Pass <c>statementId</c> to re-upload the file for an existing statement, or to supply the statement an alert asked for.
     /// Without it, a successful import also clears the matching statement alert (same bank and account, around the period end).
+    /// Pass <c>password</c> to open a password-protected PDF: it is used for that one read and is never stored, logged or returned.
     /// </summary>
     [HttpPost("/api/uploads/statements")]
     [EnableRateLimiting(RateLimits.Upload)]
@@ -137,11 +141,16 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
     // Above MemoryBufferThreshold (64 KB by default) ASP.NET Core buffers a multipart file to a temp file on disk. Raising it past
     // the size limit keeps the whole upload in memory, so a statement PDF is never written to disk, not even temporarily.
     [RequestFormLimits(MultipartBodyLengthLimit = MaxUploadBytes + (1024 * 1024), MemoryBufferThreshold = (int)MaxUploadBytes + (1024 * 1024))]
-    public async Task<ActionResult<UploadStartedResponse>> Upload(IFormFile? file, [FromForm] Guid? statementId, CancellationToken cancellationToken)
+    public async Task<ActionResult<UploadStartedResponse>> Upload(IFormFile? file, [FromForm] Guid? statementId, [FromForm] string? password, CancellationToken cancellationToken)
     {
         if (file is null || file.Length == 0)
         {
-            return ApiErrors.BadRequest("file_missing", "Choose a PDF statement to upload.");
+            return ApiErrors.BadRequest("file_missing", "Choose a statement file to upload.");
+        }
+
+        if (password is { Length: > MaxPasswordLength })
+        {
+            return ApiErrors.BadRequest("password_too_long", "That password is too long.");
         }
 
         if (file.Length > MaxUploadBytes)
@@ -153,10 +162,17 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
         await file.CopyToAsync(buffer, cancellationToken);
         var bytes = buffer.ToArray();
 
-        if (bytes.Length < 5 || !bytes.AsSpan(0, 5).SequenceEqual("%PDF-"u8))
+        var format = StatementFileSniffer.Detect(bytes, file.FileName);
+        if (format is null)
         {
-            return ApiErrors.BadRequest("not_a_pdf", "That file isn't a PDF. Download the statement as a PDF from your bank and try again.");
+            // Named like a PDF but isn't one: say so plainly. Anything else gets the list of formats FinSight reads.
+            return file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
+                ? ApiErrors.BadRequest("not_a_pdf", "That file isn't a valid PDF. Download the statement from your bank again and try again.")
+                : ApiErrors.BadRequest(StatementFailure.UnsupportedFile, StatementFailure.Message(StatementFailure.UnsupportedFile));
         }
+
+        // Only PDFs have passwords; one sent with another format is dropped rather than held in memory.
+        var pdfPassword = format == StatementFileFormat.Pdf && !string.IsNullOrEmpty(password) ? password : null;
 
         var userId = User.GetUserId();
 
@@ -175,7 +191,7 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
 
         try
         {
-            return await StartUploadAsync(bytes, file.FileName, statementId, userId, cancellationToken);
+            return await StartUploadAsync(new UploadedFile(bytes, pdfPassword), file.FileName, statementId, userId, cancellationToken);
         }
         catch
         {
@@ -184,9 +200,10 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
         }
     }
 
-    private async Task<ActionResult<UploadStartedResponse>> StartUploadAsync(byte[] bytes, string fileName, Guid? statementId, Guid userId, CancellationToken cancellationToken)
+    private async Task<ActionResult<UploadStartedResponse>> StartUploadAsync(UploadedFile upload, string fileName, Guid? statementId, Guid userId, CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
+        var bytes = upload.Content;
         var hash = StatementImportService.HashOf(bytes);
         Statement? statement;
 
@@ -234,7 +251,7 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
         }
 
         var job = await jobs.CreateAsync(userId, JobKind.Upload, StatementLabels.ProcessingPlan([statement]), cancellationToken);
-        await jobs.EnqueueAsync(new JobWorkItem(job.Id, userId, JobKind.Upload, [statement.Id], new Dictionary<Guid, byte[]> { [statement.Id] = bytes }), cancellationToken);
+        await jobs.EnqueueAsync(new JobWorkItem(job.Id, userId, JobKind.Upload, [statement.Id], new Dictionary<Guid, UploadedFile> { [statement.Id] = upload }), cancellationToken);
         return Accepted(new UploadStartedResponse(job.Id, statement.Id));
     }
 

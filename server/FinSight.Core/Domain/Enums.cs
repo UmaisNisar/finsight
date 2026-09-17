@@ -24,6 +24,19 @@ public enum StatementSourceKind
     Demo,
 }
 
+/// <summary>The kind of file a statement was imported from, detected from its content rather than its name.</summary>
+public enum StatementFileFormat
+{
+    Pdf,
+    Csv,
+
+    /// <summary>Open Financial Exchange (Microsoft Money), 1.x SGML or 2.x XML.</summary>
+    Ofx,
+
+    /// <summary>Quicken's OFX variant (Web Connect). Parsed exactly like OFX.</summary>
+    Qfx,
+}
+
 public enum DocumentKind
 {
     Unknown,

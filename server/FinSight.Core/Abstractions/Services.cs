@@ -9,7 +9,9 @@ namespace FinSight.Core.Abstractions;
 /// </summary>
 public interface IPdfTextExtractor
 {
-    /// <exception cref="PdfPasswordRequiredException">The PDF is encrypted and no valid password was given.</exception>
+    /// <param name="password">The PDF's password, for this read only. Implementations must not store or log it.</param>
+    /// <exception cref="PdfPasswordRequiredException">The PDF is encrypted and no password was given.</exception>
+    /// <exception cref="PdfPasswordIncorrectException">The PDF is encrypted and the password given doesn't open it.</exception>
     /// <exception cref="PdfUnreadableException">The file is not a readable PDF, or is too large or complex to read within the parsing limits.</exception>
     PdfTextDocument Extract(ReadOnlyMemory<byte> pdf, string? password = null, CancellationToken cancellationToken = default);
 }
@@ -19,6 +21,14 @@ public sealed class PdfPasswordRequiredException : Exception
     public PdfPasswordRequiredException() : base("The PDF is password protected.") { }
     public PdfPasswordRequiredException(string message) : base(message) { }
     public PdfPasswordRequiredException(string message, Exception inner) : base(message, inner) { }
+}
+
+/// <summary>The password given for an encrypted PDF doesn't open it. The message never contains the password.</summary>
+public sealed class PdfPasswordIncorrectException : Exception
+{
+    public PdfPasswordIncorrectException() : base("The password doesn't open the PDF.") { }
+    public PdfPasswordIncorrectException(string message) : base(message) { }
+    public PdfPasswordIncorrectException(string message, Exception inner) : base(message, inner) { }
 }
 
 public sealed class PdfUnreadableException : Exception
@@ -46,10 +56,18 @@ public interface IGeminiService
 public enum AiFailure
 {
     NotConfigured,
+
+    /// <summary>Every model in the chain answered 429: Gemini's quota for the key is used up for now.</summary>
     RateLimited,
     Timeout,
     InvalidResponse,
     Unavailable,
+
+    /// <summary>Google refused the key itself (invalid, expired, blocked, or the API is off for its project). No model will help.</summary>
+    KeyRefused,
+
+    /// <summary>FinSight's own daily allowance for this user, or the server key's shared ceiling, is used up. Nothing was sent.</summary>
+    LimitReached,
 }
 
 public sealed class AiUnavailableException : Exception

@@ -10,7 +10,7 @@ import type { Statement } from '@/api/schemas';
 import { useJobs } from '@/app/providers/JobsProvider';
 import { useToast } from '@/app/providers/ToastProvider';
 import { PageHeader } from '@/components/PageHeader';
-import { UploadProgressList, usePdfPicker } from '@/components/UploadProgressList';
+import { UploadProgressList, useStatementFilePicker } from '@/components/UploadProgressList';
 import { Collapse } from '@/components/ui/AutoHeight';
 import { Button, buttonStyles } from '@/components/ui/Button';
 import { Card, EmptyState, ErrorState, GroupedList, Skeleton } from '@/components/ui/primitives';
@@ -216,7 +216,7 @@ export default function StatementsPage() {
   // Uploads from the header go one at a time; the server matches each to a waiting alert when it can.
   const pageUploads = jobs.uploads.filter((item) => item.scope === PAGE_UPLOAD_SCOPE);
   useClearWhenDone(PAGE_UPLOAD_SCOPE, pageUploads);
-  const picker = usePdfPicker((files) => void jobs.uploadFiles(files, { scope: PAGE_UPLOAD_SCOPE }));
+  const picker = useStatementFilePicker((files) => void jobs.uploadFiles(files, { scope: PAGE_UPLOAD_SCOPE }));
   const uploadDetail = (statementId: string | null) => {
     const statement = all.find((s) => s.id === statementId);
     return statement?.status === 'processed' ? `${statement.transactionCount} transactions` : null;
@@ -257,7 +257,7 @@ export default function StatementsPage() {
             {picker.input}
             {/* Arriving from "Upload a PDF" elsewhere highlights this button; the file picker needs a click of its own. */}
             <Button variant={params.get('upload') ? 'primary' : 'secondary'} icon={<FileUp size={16} aria-hidden="true" />} onClick={picker.open}>
-              Upload PDFs
+              Upload statements
             </Button>
           </>
         }
@@ -267,8 +267,8 @@ export default function StatementsPage() {
         <Card className="mb-8 rounded-[20px] px-4 pt-3.5 pb-4 md:px-5">
           <h2 className="eyebrow mb-2 px-1">{pageUploads.some((item) => item.state !== 'done' && item.state !== 'failed') ? 'Uploading' : 'Uploaded'}</h2>
           <UploadProgressList
-            label="Uploaded PDFs"
-            rows={uploadRows(pageUploads, (id) => jobs.clearUploads(PAGE_UPLOAD_SCOPE, id), (item) => uploadDetail(item.statementId))}
+            label="Uploaded files"
+            rows={uploadRows(pageUploads, (id) => jobs.clearUploads(PAGE_UPLOAD_SCOPE, id), (item) => uploadDetail(item.statementId), jobs.unlockUpload)}
           />
         </Card>
       </Collapse>
@@ -287,7 +287,7 @@ export default function StatementsPage() {
             <EmptyState
               icon={<FileText size={26} aria-hidden="true" />}
               title="No statements yet"
-              description="Scan Gmail to find your bank statements, or use Upload PDF to add a statement downloaded from your bank’s website."
+              description="Scan Gmail to find your bank statements, or use Upload statements to add a PDF, CSV or QFX file downloaded from your bank’s website."
             />
           </Card>
         ) : (

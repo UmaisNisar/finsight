@@ -43,6 +43,8 @@ export function useUpdateSettings() {
       return { previous };
     },
     onError: (_error, _settings, context) => client.setQueryData(keys.settings, context?.previous),
+    // The server can adjust what was sent (automatic import turns off with automatic scans), so show its answer right away.
+    onSuccess: (saved) => client.setQueryData(keys.settings, saved),
     onSettled: () => {
       void client.invalidateQueries({ queryKey: keys.settings });
       void client.invalidateQueries({ queryKey: ['summary'] });
@@ -51,6 +53,8 @@ export function useUpdateSettings() {
     },
   });
 }
+
+export const useSendTestDigest = () => useMutation({ mutationFn: api.sendTestDigest });
 
 export const useGmail = (enabled = true) => useQuery({ queryKey: keys.gmail, queryFn: api.gmail, enabled });
 

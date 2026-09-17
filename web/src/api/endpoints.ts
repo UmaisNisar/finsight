@@ -66,6 +66,8 @@ export const api = {
 
   settings: () => request('/api/settings', settingsSchema),
   updateSettings: (settings: Settings) => request('/api/settings', settingsSchema, { method: 'PUT', body: settings }),
+  /** Emails the signed-in user last month's summary, marked as a test. Rate limited on the server. */
+  sendTestDigest: () => request('/api/settings/digest/test', z.object({ sent: z.boolean() }), { method: 'POST' }),
 
   gmail: () => request('/api/gmail', gmailConnectionSchema),
   disconnectGmail: () => request('/api/gmail', null, { method: 'DELETE' }),
@@ -80,14 +82,18 @@ export const api = {
   dismissStatement: (id: string) => request(`/api/statements/${id}/dismiss`, null, { method: 'POST' }),
   institutions: () => request('/api/institutions', z.array(institutionSchema)),
   /**
-   * Uploads a PDF. With `statementId` it fulfils that statement (for example an alert); without it the server matches
-   * the file to an open alert for the same account and period, if there is one.
+   * Uploads a statement file: a PDF, or a CSV, OFX or QFX download. With `statementId` it fulfils that statement (for
+   * example an alert); without it the server matches the file to an open alert for the same account and period, if
+   * there is one. `password` opens a password-protected PDF; it travels only in this request's body and is never kept.
    */
-  uploadStatement: (file: File, statementId?: string) => {
+  uploadStatement: (file: File, statementId?: string, password?: string) => {
     const form = new FormData();
     form.append('file', file);
     if (statementId) {
       form.append('statementId', statementId);
+    }
+    if (password) {
+      form.append('password', password);
     }
     return request('/api/uploads/statements', uploadStartedSchema, { method: 'POST', body: form });
   },

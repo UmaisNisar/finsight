@@ -162,17 +162,18 @@ public sealed class ApiTests : IClassFixture<FinSightApiFactory>
     }
 
     [Fact]
-    public async Task Ai_analysis_reports_unavailable_without_breaking_the_dashboard()
+    public async Task Without_ai_the_analysis_is_written_by_finsight_without_breaking_the_dashboard()
     {
         var client = await _factory.CreateDemoClientAsync();
 
         var response = await client.PostAsync("/api/analysis/generate?period=last-month", null);
 
-        response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
-        var error = await response.JsonAsync();
-        error.GetProperty("code").GetString().Should().Be("ai_not_configured");
-        error.GetProperty("message").GetString().Should().Contain("transaction data is still available");
-        error.TryGetProperty("stackTrace", out _).Should().BeFalse();
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var analysis = await response.JsonAsync();
+        analysis.GetProperty("source").GetString().Should().Be("builtIn");
+        analysis.GetProperty("fallbackReason").GetString().Should().Be("not_configured");
+        analysis.GetProperty("availability").GetProperty("configured").GetBoolean().Should().BeFalse();
+        analysis.GetProperty("analysis").GetProperty("summary").GetString().Should().NotBeNullOrWhiteSpace();
 
         (await client.GetAsync("/api/summary?period=last-month")).StatusCode.Should().Be(HttpStatusCode.OK);
     }

@@ -1,8 +1,10 @@
 import { ChevronDown, Info, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { Link } from 'react-router';
 import { errorMessage } from '@/api/client';
-import { useAnalysis, useGenerateAnalysis } from '@/api/queries';
+import { api } from '@/api/endpoints';
+import { keys, useAnalysis, useGenerateAnalysis } from '@/api/queries';
 import type { Analysis, AnalysisResponse } from '@/api/schemas';
 import { AutoHeight, Collapse } from '@/components/ui/AutoHeight';
 import { WidgetBoundary } from '@/components/errors/WidgetBoundary';
@@ -105,43 +107,83 @@ export function AiInsightCard(props: AiInsightCardProps) {
   );
 }
 
+/**
+ * The line under a summary FinSight wrote without AI: calm, short, and honest about why. A reason that no longer applies
+ * (a key was added, today's allowance reset) drops back to the plain first sentence.
+ */
+export function builtInNote(data: Pick<AnalysisResponse, 'fallbackReason' | 'availability'>): { text: string; settingsLink?: string } {
+  const lead = 'Written by FinSight without AI.';
+  const { configured, blocked } = data.availability;
+  switch (data.fallbackReason) {
+    case 'key_refused':
+      return !configured || blocked === 'key_refused' ? { text: `${lead} Google refused the Gemini key.`, settingsLink: 'Update it in Settings' } : { text: lead };
+    case 'quota_exhausted':
+      return { text: `${lead} Gemini’s daily limit was reached; try again after it resets.` };
+    case 'limit_reached':
+      return blocked === 'limit_reached' ? { text: `${lead} Today’s AI allowance is used up; it resets tomorrow.` } : { text: lead };
+    case 'unavailable':
+      return { text: `${lead} Gemini couldn’t be reached just now.` };
+    default:
+      return configured ? { text: lead } : { text: 'Written by FinSight from your numbers, without AI.' };
+  }
+}
+
 function AiInsightCardContent({ period, hasData, compact = false, insightsLink = '/insights' }: AiInsightCardProps) {
   const analysis = useAnalysis(period);
   const generate = useGenerateAnalysis(period);
+  // Read from the cache only: the app shell has already loaded the session. Demo accounts can't add a key.
+  const session = useQuery({ queryKey: keys.session, queryFn: api.session, enabled: false });
   // Analysis takes ~20s and is rate limited; a double click must never start two.
   const once = useSingleFlight();
   const analyze = () => void once(() => generate.mutateAsync());
   const titleId = useId();
   const data = analysis.data;
+  const canManageKey = !!session.data?.user && !session.data.user.isDemo;
 
-  const unavailable = !data
-    ? null
-    : !data.availability.configured
-      ? 'AI analysis isn’t set up on this server. Every number here is still calculated directly from your statements.'
-      : !data.availability.enabled
-        ? 'AI insights are turned off.'
-        : null;
+  // Whether asking Gemini could work right now. Without it, FinSight writes the summary itself.
+  const aiReady = !!data && data.availability.configured && !data.availability.blocked;
+
+  const addKeyLink =
+    data && !data.availability.configured && canManageKey ? (
+      <Link to="/settings" className={buttonStyles({ variant: 'plain', size: 'sm' })}>
+        Add a Gemini key
+      </Link>
+    ) : null;
 
   function body() {
     if (analysis.isPending) return <InsightSkeleton />;
     if (!data) return <ErrorState className="py-2" message={errorMessage(analysis.error)} onRetry={() => void analysis.refetch()} />;
     if (generate.isPending) return <GeneratingState />;
-    if (unavailable) {
+    if (!data.availability.enabled) {
       return (
         <p className="fade-in text-[0.9375rem] text-label-secondary">
-          {unavailable}{' '}
-          {!data.availability.enabled && data.availability.configured && (
-            <Link to="/settings" className="text-accent">
-              Turn on in Settings
-            </Link>
-          )}
+          AI insights are turned off.{' '}
+          <Link to="/settings" className="text-accent">
+            Turn on in Settings
+          </Link>
         </p>
       );
     }
     if (data.analysis) {
+      const builtIn = data.source === 'builtIn';
+      const note = builtIn ? builtInNote(data) : null;
       return (
         <div className="fade-in">
           <p className={cn('text-pretty text-label', compact ? 'text-[1.0625rem] leading-relaxed' : 'text-[1.125rem] leading-relaxed')}>{data.analysis.summary}</p>
+          {note && (
+            <p className="mt-3 text-[0.875rem] text-label-secondary">
+              {note.text}
+              {note.settingsLink && canManageKey && (
+                <>
+                  {' '}
+                  <Link to="/settings" className="text-accent">
+                    {note.settingsLink}
+                  </Link>
+                  .
+                </>
+              )}
+            </p>
+          )}
           {data.state === 'stale' && (
             <p className="mt-3 flex items-center gap-2 text-[0.875rem] text-attention">
               <Info size={15} aria-hidden="true" />
@@ -154,20 +196,43 @@ function AiInsightCardContent({ period, hasData, compact = false, insightsLink =
                 See full analysis
               </Link>
             )}
-            <Button variant={data.state === 'stale' ? 'secondary' : 'plain'} size="sm" icon={<RefreshCw size={14} aria-hidden="true" />} onClick={analyze}>
-              Regenerate
-            </Button>
+            {!builtIn ? (
+              <Button variant={data.state === 'stale' ? 'secondary' : 'plain'} size="sm" icon={<RefreshCw size={14} aria-hidden="true" />} onClick={analyze}>
+                Regenerate
+              </Button>
+            ) : aiReady ? (
+              <Button variant={data.state === 'stale' ? 'secondary' : 'plain'} size="sm" icon={<Sparkles size={14} aria-hidden="true" />} onClick={analyze}>
+                {data.fallbackReason === 'not_configured' ? 'Analyze with AI' : 'Try again with AI'}
+              </Button>
+            ) : (
+              data.state === 'stale' && (
+                <Button variant="secondary" size="sm" icon={<RefreshCw size={14} aria-hidden="true" />} onClick={analyze}>
+                  Update summary
+                </Button>
+              )
+            )}
+            {builtIn && addKeyLink}
           </div>
         </div>
       );
     }
     if (hasData) {
-      return (
+      return aiReady ? (
         <div className="fade-in">
           <p className="text-[0.9375rem] text-label-secondary">Get a plain-language explanation of this period: what changed, what stands out, and where you could save.</p>
           <Button className="mt-4" icon={<Sparkles size={16} aria-hidden="true" />} onClick={analyze}>
             Analyze spending
           </Button>
+        </div>
+      ) : (
+        <div className="fade-in">
+          <p className="text-[0.9375rem] text-label-secondary">Get a plain-language summary of this period: what changed and what stands out. Without AI, FinSight writes it from your numbers.</p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button icon={<Sparkles size={16} aria-hidden="true" />} onClick={analyze}>
+              Summarize spending
+            </Button>
+            {addKeyLink}
+          </div>
         </div>
       );
     }
@@ -231,9 +296,10 @@ export function SavingsOpportunities({ items, currency, limit }: { items: Analys
   );
 }
 
-/** Shows what the validator changed. Corrections are never hidden. */
+/** Shows what the validator changed. Corrections are never hidden. A summary FinSight wrote itself has none, so shows nothing. */
 export function AnalysisCorrections({ response }: { response: AnalysisResponse }) {
   const [open, setOpen] = useState(false);
+  if (response.source === 'builtIn') return null;
   if (response.corrections.length === 0) {
     return (
       <p className="caption flex items-center gap-1.5">

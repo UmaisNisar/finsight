@@ -3,6 +3,9 @@ import { Check, X } from 'lucide-react';
 import { useRef, type ReactNode } from 'react';
 import type { UploadState } from '@/app/providers/JobsProvider';
 import { cn } from '@/lib/cn';
+import { STATEMENT_FILE_ACCEPT } from '@/lib/statements';
+import { PdfPasswordPrompt } from './PdfPasswordPrompt';
+import { Collapse } from './ui/AutoHeight';
 import { IconButton } from './ui/Button';
 
 export interface UploadRowData {
@@ -14,6 +17,8 @@ export interface UploadRowData {
   /** Extra detail once done, like "CIBC · 42 transactions". */
   detail?: string | null;
   onRemove?: () => void;
+  /** A locked PDF that can be sent again with its password. Shows a password field in place of the failure message. */
+  unlock?: { incorrect: boolean; error?: string | null; onUnlock: (password: string) => Promise<unknown> };
 }
 
 const STATE_TEXT: Record<UploadState, string> = {
@@ -49,7 +54,8 @@ function StateIcon({ state }: { state: UploadState }) {
 
 /**
  * A compact list of files being uploaded: name, a state glyph and a word for where each one is. Rows slide in as
- * files are added and fold away when cleared. Announced politely to screen readers as states change.
+ * files are added and fold away when cleared. Announced politely to screen readers as states change. A locked PDF's
+ * row opens a password field; unlocking sends the same file again in place.
  */
 export function UploadProgressList({ rows, label = 'Uploads', className }: { rows: UploadRowData[]; label?: string; className?: string }) {
   return (
@@ -74,7 +80,12 @@ export function UploadProgressList({ rows, label = 'Uploads', className }: { row
                   <span className="min-w-0 flex-1 truncate text-[0.875rem] leading-5">{row.name}</span>
                   <span className={cn('caption shrink-0 tabular', row.state === 'failed' && 'text-critical')}>{row.state === 'done' && row.detail ? row.detail : STATE_TEXT[row.state]}</span>
                 </div>
-                {row.state === 'failed' && row.message && <p className="text-[0.8125rem] leading-snug text-critical">{row.message}</p>}
+                <Collapse open={row.state === 'failed' && !!row.message && !row.unlock}>
+                  <p className="text-[0.8125rem] leading-snug text-critical">{row.message}</p>
+                </Collapse>
+                <Collapse open={row.state === 'failed' && !!row.unlock}>
+                  {row.unlock && <PdfPasswordPrompt compact className="pt-2 pb-0.5" incorrect={row.unlock.incorrect} error={row.unlock.error} onUnlock={row.unlock.onUnlock} />}
+                </Collapse>
               </div>
               {row.onRemove && row.state === 'failed' && (
                 <IconButton label={`Remove ${row.name} from the list`} onClick={row.onRemove} className="-my-1.5 -mr-2 size-8 shrink-0">
@@ -89,8 +100,8 @@ export function UploadProgressList({ rows, label = 'Uploads', className }: { row
   );
 }
 
-/** The highlight a card shows while PDFs are dragged over it: an accent outline and a quiet tint, never a glow. */
-export function DropHighlight({ active, children = 'Drop PDFs to upload' }: { active: boolean; children?: ReactNode }) {
+/** The highlight a card shows while files are dragged over it: an accent outline and a quiet tint, never a glow. */
+export function DropHighlight({ active, children = 'Drop files to upload' }: { active: boolean; children?: ReactNode }) {
   return (
     <div
       aria-hidden="true"
@@ -104,15 +115,15 @@ export function DropHighlight({ active, children = 'Drop PDFs to upload' }: { ac
   );
 }
 
-/** A hidden multi-file PDF input and a function that opens it. The input resets after each pick. */
-export function usePdfPicker(onFiles: (files: File[]) => void) {
+/** A hidden multi-file input for statement files (PDF, CSV, OFX, QFX) and a function that opens it. The input resets after each pick. */
+export function useStatementFilePicker(onFiles: (files: File[]) => void, { multiple = true, accept = STATEMENT_FILE_ACCEPT }: { multiple?: boolean; accept?: string } = {}) {
   const input = useRef<HTMLInputElement>(null);
   const element = (
     <input
       ref={input}
       type="file"
-      accept="application/pdf,.pdf"
-      multiple
+      accept={accept}
+      multiple={multiple}
       className="sr-only"
       tabIndex={-1}
       aria-hidden="true"

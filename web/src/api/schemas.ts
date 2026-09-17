@@ -38,7 +38,13 @@ export const settingsSchema = z.object({
   theme: themeSchema,
   aiCategorizationEnabled: z.boolean(),
   aiInsightsEnabled: z.boolean(),
-  notificationsEnabled: z.boolean(),
+  /** Check Gmail for new statements daily. Scans only discover statements. */
+  autoScanEnabled: z.boolean(),
+  /** Import new statements automatically, only for a bank and account already imported. Needs autoScanEnabled. */
+  autoImportEnabled: z.boolean(),
+  monthlyDigestEnabled: z.boolean(),
+  /** Read-only: whether the server can send email. Ignored when saving. */
+  emailConfigured: z.boolean(),
 });
 
 export const gmailConnectionSchema = z.object({
@@ -55,7 +61,16 @@ export const jobSchema = z.object({
   id: z.string(),
   kind: z.enum(['sync', 'process', 'upload']),
   status: z.enum(['queued', 'running', 'succeeded', 'failed']),
-  steps: z.array(z.object({ key: z.string(), label: z.string(), status: stepStatusSchema, detail: z.string().nullable() })),
+  steps: z.array(
+    z.object({
+      key: z.string(),
+      label: z.string(),
+      status: stepStatusSchema,
+      detail: z.string().nullable(),
+      /** A failed statement step's stable failure code, such as `pdf_password_protected`. Optional for older servers. */
+      code: z.string().nullish(),
+    }),
+  ),
   errorCode: z.string().nullable(),
   errorMessage: z.string().nullable(),
   createdAt: isoDateTime,
@@ -99,6 +114,8 @@ export const statementSchema = z.object({
   /** For alerts: the bank's sign-in page and how to download statements there, from FinSight's own list (never the email). */
   signInUrl: z.string().nullable().default(null),
   downloadHint: z.string().nullable().default(null),
+  /** The kind of file the statement was last read from, detected by content. Null until read, and for sample data. */
+  format: z.enum(['pdf', 'csv', 'ofx', 'qfx']).nullish(),
 });
 
 /**
@@ -331,10 +348,20 @@ export const analysisResponseSchema = z.object({
   state: z.enum(['fresh', 'stale', 'none']),
   analysis: analysisSchema.nullable(),
   corrections: z.array(z.object({ section: z.string(), message: z.string() })),
+  /** The Gemini model that wrote it, which may be a fallback model. Null when FinSight wrote it without AI. */
   model: z.string().nullable(),
   generatedAt: isoDateTime.nullable(),
-  availability: z.object({ enabled: z.boolean(), configured: z.boolean() }),
+  availability: z.object({
+    enabled: z.boolean(),
+    configured: z.boolean(),
+    /** Why a new try with AI can't help right now, even with a key: 'key_refused' or 'limit_reached'. */
+    blocked: z.string().nullish().catch(null),
+  }),
   currency: z.string(),
+  /** 'builtIn' when FinSight wrote the analysis without AI. Missing on older servers, which only wrote AI analyses. */
+  source: z.enum(['ai', 'builtIn']).nullish().catch(null),
+  /** Why AI wasn't used: 'not_configured', 'key_refused', 'quota_exhausted', 'limit_reached' or 'unavailable'. */
+  fallbackReason: z.string().nullish().catch(null),
 });
 
 export const aiKeySchema = z.object({
@@ -343,6 +370,9 @@ export const aiKeySchema = z.object({
   hint: z.string().nullable(),
   serverKeyAvailable: z.boolean(),
   model: z.string(),
+  /** Set when Google last refused the key in use, or every model's quota was used up. Cleared by the next successful call. */
+  lastFailure: z.enum(['key_refused', 'quota_exhausted']).nullish().catch(null),
+  lastFailureAt: isoDateTime.nullish().catch(null),
 });
 
 export const apiErrorSchema = z.object({ code: z.string(), message: z.string() });

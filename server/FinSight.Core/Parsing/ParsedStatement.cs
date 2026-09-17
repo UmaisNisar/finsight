@@ -9,6 +9,10 @@ public sealed record StatementParseContext(
     string? Subject = null);
 
 /// <param name="Amount">Signed from the account holder's perspective: positive = money in.</param>
+/// <param name="ExternalId">
+/// The bank's own id for the transaction (OFX FITID), when the file has one. Used only to fingerprint the transaction, so
+/// re-imports and overlapping downloads dedupe exactly; it is never stored.
+/// </param>
 public sealed record ParsedTransaction(
     DateOnly Date,
     DateOnly? PostingDate,
@@ -16,7 +20,8 @@ public sealed record ParsedTransaction(
     decimal Amount,
     decimal? Balance,
     double Confidence,
-    int Page);
+    int Page,
+    string? ExternalId = null);
 
 public sealed record StatementMetadata(
     string? Institution,
@@ -37,6 +42,15 @@ public enum ParseFailure
 
     /// <summary>Text was found but no rows looked like transactions.</summary>
     NoTransactions,
+
+    /// <summary>A structured file (CSV, OFX) whose layout couldn't be mapped with confidence. Nothing is guessed.</summary>
+    Unrecognized,
+
+    /// <summary>The file holds transactions for more than one account.</summary>
+    MultipleAccounts,
+
+    /// <summary>The file exceeded a parsing limit (rows or time).</summary>
+    TooLarge,
 }
 
 public sealed record ParsedStatement(

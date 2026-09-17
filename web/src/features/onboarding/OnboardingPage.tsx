@@ -11,7 +11,7 @@ import { useConfirm } from '@/app/providers/ConfirmProvider';
 import { useJobs, type UploadItem, type UploadState } from '@/app/providers/JobsProvider';
 import { useToast } from '@/app/providers/ToastProvider';
 import { ProgressChecklist } from '@/components/ProgressChecklist';
-import { UploadProgressList, usePdfPicker, type UploadRowData } from '@/components/UploadProgressList';
+import { UploadProgressList, useStatementFilePicker, type UploadRowData } from '@/components/UploadProgressList';
 import { AnimatedNumber, formatCount } from '@/components/ui/AnimatedNumber';
 import { AutoHeight, Collapse } from '@/components/ui/AutoHeight';
 import { Button, buttonStyles } from '@/components/ui/Button';
@@ -346,7 +346,7 @@ function ConfirmStep({ discovered, statements, alertCount, alertUploadsActive, a
 
       <div className="mt-3">
         <Button variant={discovered.length > 0 || alertCount > 0 ? 'plain' : 'secondary'} className={cn((discovered.length > 0 || alertCount > 0) && '-ml-2')} icon={<FileUp size={16} aria-hidden="true" />} onClick={onUpload}>
-          {discovered.length > 0 || alertCount > 0 ? 'Add a PDF yourself' : addedRows.length > 0 ? 'Add more PDFs' : 'Choose PDF files'}
+          {discovered.length > 0 || alertCount > 0 ? 'Add a statement yourself' : addedRows.length > 0 ? 'Add more files' : 'Choose files'}
         </Button>
       </div>
 
@@ -590,7 +590,7 @@ export default function OnboardingPage() {
   };
   const sync = useMutation({ mutationFn: api.syncStatements, onSuccess: trackAs('sync') });
   const process = useMutation({ mutationFn: (ids: string[]) => api.processStatements(ids), onSuccess: trackAs('process') });
-  const picker = usePdfPicker((files) => void jobs.uploadFiles(files, { scope: ONBOARDING_UPLOAD_SCOPE }));
+  const picker = useStatementFilePicker((files) => void jobs.uploadFiles(files, { scope: ONBOARDING_UPLOAD_SCOPE }));
 
   // The job in flight, including the moment between the request being accepted and its first progress arriving.
   const job = jobs.job;
@@ -625,7 +625,7 @@ export default function OnboardingPage() {
   const sending = jobs.uploads.some((item) => item.state === 'uploading');
   const untrackedUploads = groups.uploads.filter((s) => !trackedIds.has(s.id) && !(sending && isInProgress(s))).map(statementRow);
   const ownUploads = jobs.uploads.filter((item) => item.scope === ONBOARDING_UPLOAD_SCOPE);
-  const addedRows = [...uploadRows(ownUploads, (id) => jobs.clearUploads(ONBOARDING_UPLOAD_SCOPE, id), doneDetail), ...untrackedUploads];
+  const addedRows = [...uploadRows(ownUploads, (id) => jobs.clearUploads(ONBOARDING_UPLOAD_SCOPE, id), doneDetail, jobs.unlockUpload), ...untrackedUploads];
   const uploadsInFlight = jobs.uploads.some((item) => item.state === 'queued' || item.state === 'uploading' || item.state === 'processing');
   const liveUploads = jobs.uploads.filter((item) => item.state !== 'failed' || item.jobId !== null);
   const uploadsStarted = groups.uploads.length > 0 || liveUploads.some((item) => item.state !== 'failed');
@@ -727,7 +727,7 @@ export default function OnboardingPage() {
         ? { kind: 'empty' }
         : { kind: 'idle' };
 
-  // Uploads (from alert cards, the add step or "Add a PDF yourself") count as importing alongside selected statements.
+  // Uploads (from alert cards, the add step or "Add a statement yourself") count as importing alongside selected statements.
   const uploadSteps: JobStep[] = [...uploadRows(liveUploads, () => undefined, doneDetail), ...untrackedUploads].map((row) => ({
     key: `upload:${row.key}`,
     label: row.name,
@@ -747,7 +747,7 @@ export default function OnboardingPage() {
   const aiDetail = key?.hasUserKey ? 'Your key' : aiOn ? 'Built-in' : 'No key';
   const transactions = groups.processed.reduce((sum, s) => sum + s.transactionCount, 0);
   const selectedSummary = groups.importStarted || selected.size > 0 ? `${plural(groups.importStarted ? groups.fromGmail.filter((s) => s.status !== 'discovered').length : selected.size, 'statement')} selected` : null;
-  const addedSummary = addedCount > 0 ? `${plural(addedCount, 'PDF')} added` : null;
+  const addedSummary = addedCount > 0 ? `${plural(addedCount, 'file')} added` : null;
 
   const summaries: Record<StepId, ReactNode> = {
     source: source ? SOURCE_COPY[source].summary : null,

@@ -40,8 +40,12 @@ public static partial class TransactionNormalizer
         foreach (var transaction in parsed.Transactions.OrderBy(t => t.Date).ThenBy(t => t.Page))
         {
             var amount = decimal.Round(transaction.Amount, 2, MidpointRounding.AwayFromZero);
-            var descriptionKey = MerchantNormalizer.KeyOf(transaction.Description);
-            var identity = string.Create(CultureInfo.InvariantCulture, $"{accountKey}|{transaction.Date:yyyy-MM-dd}|{amount:0.00}|{descriptionKey}");
+
+            // The bank's own transaction id (OFX FITID) identifies a row exactly, even when its description is edited between
+            // downloads. Date and amount stay in, so a bank that reuses ids for different rows can't merge them.
+            var identity = transaction.ExternalId is { Length: > 0 } externalId
+                ? string.Create(CultureInfo.InvariantCulture, $"{accountKey}|fitid:{externalId}|{transaction.Date:yyyy-MM-dd}|{amount:0.00}")
+                : string.Create(CultureInfo.InvariantCulture, $"{accountKey}|{transaction.Date:yyyy-MM-dd}|{amount:0.00}|{MerchantNormalizer.KeyOf(transaction.Description)}");
 
             var occurrence = occurrences.GetValueOrDefault(identity);
             occurrences[identity] = occurrence + 1;

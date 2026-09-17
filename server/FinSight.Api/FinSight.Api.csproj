@@ -17,6 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="..\FinSight.Core\FinSight.Core.csproj" />
     <ProjectReference Include="..\FinSight.Infrastructure\FinSight.Infrastructure.csproj" />
+    <ProjectReference Include="..\FinSight.Migrations.Postgres\FinSight.Migrations.Postgres.csproj" />
   </ItemGroup>
 
 </Project>

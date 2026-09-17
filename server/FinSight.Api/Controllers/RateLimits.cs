@@ -11,12 +11,14 @@ public static class RateLimits
     public const string Sync = "sync";
     public const string Upload = "upload";
     public const string Demo = "demo";
+    public const string TestEmail = "test-email";
 
     public static IServiceCollection AddFinSightRateLimiting(this IServiceCollection services, IConfiguration configuration)
     {
         // Demo sign-ins create a user with a year of data each, so they are limited per client address.
         var demoPerHour = configuration.GetValue("RateLimits:DemoPerHour", 20);
         var uploadsPerHour = configuration.GetValue("RateLimits:UploadsPerHour", 120);
+        var testEmailsPerHour = configuration.GetValue("RateLimits:TestEmailsPerHour", 3);
 
         services.AddRateLimiter(options =>
         {
@@ -58,6 +60,13 @@ public static class RateLimits
                 PermitLimit = uploadsPerHour,
                 Window = TimeSpan.FromHours(1),
                 SegmentsPerWindow = 6,
+            }));
+
+            // A test summary sends a real email to the user's own address; a few an hour is plenty and limits mail volume.
+            options.AddPolicy(TestEmail, context => RateLimitPartition.GetFixedWindowLimiter(PartitionKey(context), _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = testEmailsPerHour,
+                Window = TimeSpan.FromHours(1),
             }));
 
             options.AddPolicy(Demo, context => RateLimitPartition.GetFixedWindowLimiter(

@@ -6,9 +6,7 @@ using FinSight.Api.Hosting;
 using FinSight.Api.Middleware;
 using FinSight.Infrastructure;
 using FinSight.Infrastructure.Persistence;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,33 +14,22 @@ var builder = WebApplication.CreateBuilder(args);
 // environment variables in production. appsettings.Local.json is git-ignored for convenience.
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
+// SQLite by default; Database:Provider=Postgres with a PostgreSQL connection string for deployments.
 // A relative SQLite path resolves against the app's content root, not whatever directory it was started from,
 // so the database and the Data Protection keys always live side by side.
-var connectionString = SqlitePaths.Resolve(builder.Configuration.GetConnectionString("FinSight") ?? "Data Source=.data/finsight.db", builder.Environment.ContentRootPath);
-builder.Configuration["ConnectionStrings:FinSight"] = connectionString;
+var databaseOptions = builder.Configuration.GetDatabaseOptions();
+if (databaseOptions.Provider == DatabaseProvider.Sqlite)
+{
+    builder.Configuration["ConnectionStrings:FinSight"] = SqlitePaths.Resolve(
+        builder.Configuration.GetConnectionString("FinSight") ?? DatabaseSetup.DefaultSqliteConnectionString, builder.Environment.ContentRootPath);
+}
 
 builder.Services.AddFinSightInfrastructure(builder.Configuration);
 
-var keysPath = builder.Configuration["DataProtection:KeysPath"] ?? ".data/keys";
-var dataProtection = builder.Services.AddDataProtection()
-    .SetApplicationName("FinSight")
-    .PersistKeysToFileSystem(new DirectoryInfo(Path.GetFullPath(keysPath, builder.Environment.ContentRootPath)));
-
-// The key ring decrypts every encrypted field, so it must not sit next to the database in plain form. With a custom key
-// directory, Data Protection writes keys unencrypted unless told otherwise: use a certificate when one is configured
-// (DataProtection:CertificatePath and DataProtection:CertificatePassword, a PKCS#12 file), else DPAPI on Windows.
-// On other platforms without a certificate the keys stay unencrypted, and Data Protection logs a warning when it writes one.
-var keyCertificatePath = builder.Configuration["DataProtection:CertificatePath"];
-if (!string.IsNullOrWhiteSpace(keyCertificatePath))
-{
-    var keyCertificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
-        Path.GetFullPath(keyCertificatePath, builder.Environment.ContentRootPath), builder.Configuration["DataProtection:CertificatePassword"]);
-    dataProtection.ProtectKeysWithCertificate(keyCertificate).UnprotectKeysWithAnyCertificate(keyCertificate);
-}
-else if (OperatingSystem.IsWindows())
-{
-    dataProtection.ProtectKeysWithDpapi();
-}
+// The key ring is encrypted with DataProtection:CertificatePath, or DPAPI on Windows. Outside Development, startup fails
+// rather than write an unencrypted key ring, unless DataProtection:AllowUnprotectedKeys is set (Hosting/DataProtectionSetup.cs).
+var keyRingProtection = builder.Services.AddFinSightDataProtection(builder.Configuration, builder.Environment);
+builder.Services.AddFinSightHealthChecks();
 
 builder.Services
     .AddControllers(options =>
@@ -95,9 +82,23 @@ if (trustForwardedHeaders)
 
 var app = builder.Build();
 
-await using (var scope = app.Services.CreateAsyncScope())
+if (keyRingProtection == KeyRingProtection.None && !app.Environment.IsDevelopment())
 {
-    await scope.ServiceProvider.GetRequiredService<FinSightDbContext>().Database.MigrateAsync();
+    app.Logger.LogWarning("DataProtection:AllowUnprotectedKeys is set: the key ring is stored unencrypted. Configure DataProtection:CertificatePath for real deployments.");
+}
+
+// Migrations run on startup unless Database:MigrateOnStartup is false. On PostgreSQL an advisory lock serializes instances that
+// start together. Database:MigrateOnly applies them and exits, for a separate release step.
+if (databaseOptions.MigrateOnStartup || databaseOptions.MigrateOnly)
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    await DatabaseSetup.MigrateAsync(scope.ServiceProvider.GetRequiredService<FinSightDbContext>());
+}
+
+if (databaseOptions.MigrateOnly)
+{
+    app.Logger.LogInformation("Database migrations applied; exiting because Database:MigrateOnly is set.");
+    return;
 }
 
 if (trustForwardedHeaders)
@@ -126,6 +127,7 @@ app.UseMiddleware<CsrfHeaderMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
 
+app.MapFinSightHealthChecks();
 app.MapControllers();
 app.MapFallback("/api/{**path}", () => Results.Json(ApiErrors.Create(404, "not_found", "That endpoint doesn't exist."), statusCode: 404)).AllowAnonymous();
 app.MapFallbackToFile("index.html").AllowAnonymous();

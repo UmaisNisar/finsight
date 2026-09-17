@@ -5,7 +5,8 @@ namespace FinSight.Core.Statements;
 /// <summary>
 /// Decides whether an imported statement is the one a statement alert announced. Banks email the alert shortly after
 /// the statement closes, so the alert's received date must fall between a few days before and a few weeks after the
-/// statement's period end, for the same institution and (when both are known) the same account.
+/// statement's period end, for the same institution and (when both are known) the same account. Imports that don't name their
+/// institution (a CSV without a known layout, an OFX file without an FI element) never match.
 /// </summary>
 public static class StatementAlertMatching
 {
@@ -17,6 +18,13 @@ public static class StatementAlertMatching
         if (alert.ReceivedAt is not { } received || imported.PeriodEnd is not { } periodEnd
             || string.IsNullOrWhiteSpace(alert.Institution) || string.IsNullOrWhiteSpace(imported.Institution)
             || KnownInstitutions.NormalizeName(alert.Institution) != KnownInstitutions.NormalizeName(imported.Institution))
+        {
+            return false;
+        }
+
+        // An import that names neither its account's last digits nor its type (a bare CSV, say) can't be told apart from the
+        // bank's other accounts, so it never clears an alert on its own.
+        if (imported.AccountMask is null && imported.AccountType == AccountType.Unknown)
         {
             return false;
         }

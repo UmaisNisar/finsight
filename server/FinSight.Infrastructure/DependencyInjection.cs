@@ -1,4 +1,5 @@
 using FinSight.Core.Abstractions;
+using FinSight.Infrastructure.Automation;
 using FinSight.Infrastructure.Demo;
 using FinSight.Infrastructure.Gemini;
 using FinSight.Infrastructure.Gmail;
@@ -31,6 +32,7 @@ public static class DependencyInjection
     {
         services.AddOptions<GoogleIntegrationOptions>().Bind(configuration.GetSection(GoogleIntegrationOptions.Section));
         services.AddOptions<GeminiOptions>().Bind(configuration.GetSection(GeminiOptions.Section));
+        services.AddOptions<AiOptions>().Bind(configuration.GetSection(AiOptions.Section));
         services.AddOptions<DemoOptions>().Bind(configuration.GetSection(DemoOptions.Section));
 
         services.AddSingleton(TimeProvider.System);
@@ -44,8 +46,8 @@ public static class DependencyInjection
         services.AddScoped<UserContext>();
         services.AddScoped<IUserContext>(sp => sp.GetRequiredService<UserContext>());
 
-        var connectionString = configuration.GetConnectionString("FinSight") ?? "Data Source=.data/finsight.db";
-        services.AddDbContext<FinSightDbContext>(options => options.UseSqlite(connectionString));
+        // SQLite by default; Database:Provider=Postgres for deployments (Persistence/DatabaseSetup.cs).
+        services.AddFinSightDatabase(configuration);
 
         services.AddSingleton<IPdfTextExtractor, PdfPigTextExtractor>();
 
@@ -55,6 +57,12 @@ public static class DependencyInjection
         services.AddHttpClient<GeminiKeyValidator>(c => c.Timeout = TimeSpan.FromSeconds(15));
         services.AddScoped<IGeminiKeyResolver, GeminiKeyResolver>();
         services.AddScoped<IGeminiService, GeminiService>();
+
+        // In-memory daily AI allowances and key status; this app runs as a single instance (Gemini/AiUsage.cs).
+        services.AddSingleton<AiQuota>();
+        services.AddSingleton<AiKeyHealth>();
+        services.AddSingleton<PendingCategorizationRetry>();
+        services.AddHostedService(sp => sp.GetRequiredService<PendingCategorizationRetry>());
 
         services.AddSingleton(_ => new JobQueue(configuration.GetValue("Uploads:MaxQueuedMegabytes", JobQueue.DefaultMaxQueuedUploadBytes / (1024 * 1024)) * 1024 * 1024));
         services.AddHostedService<JobWorker>();
@@ -68,6 +76,8 @@ public static class DependencyInjection
         services.AddScoped<DashboardService>();
         services.AddScoped<AnalysisService>();
         services.AddScoped<DemoDataService>();
+
+        services.AddFinSightAutomation(configuration);
 
         return services;
     }

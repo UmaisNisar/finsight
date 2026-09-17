@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using FinSight.Core.Abstractions;
 using FinSight.Core.Domain;
+using FinSight.Core.Import;
 using FinSight.Core.Normalization;
 using FinSight.Core.Parsing;
 using FinSight.Core.Statements;
@@ -20,9 +21,9 @@ public enum ImportOutcome
 public sealed record ImportResult(ImportOutcome Outcome, int TransactionCount, int SkippedDuplicates, string? FailureCode);
 
 /// <summary>
-/// PDF extraction → parsing → normalization → duplicate detection → rule categorization, for one
-/// statement. Idempotent: reprocessing replaces the statement's transactions while keeping user
-/// edits, and transactions already imported from an overlapping statement are skipped.
+/// Format detection → reading (PDF text extraction and parsing, or a CSV/OFX parser) → normalization → duplicate detection →
+/// rule categorization, for one statement. Idempotent: reprocessing replaces the statement's transactions while keeping user
+/// edits, and transactions already imported from an overlapping statement or download are skipped.
 /// </summary>
 public sealed class StatementImportService(
     FinSightDbContext db,
@@ -35,10 +36,12 @@ public sealed class StatementImportService(
 
     public static string HashOf(ReadOnlySpan<byte> bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
-    public async Task<ImportResult> ImportAsync(Statement statement, byte[] pdf, string defaultCurrency, CancellationToken cancellationToken)
+    /// <param name="content">The file's bytes, in memory only.</param>
+    /// <param name="password">A password-protected PDF's password, used for this read only and never stored.</param>
+    public async Task<ImportResult> ImportAsync(Statement statement, byte[] content, string defaultCurrency, CancellationToken cancellationToken, string? password = null)
     {
         var now = time.GetUtcNow();
-        var hash = HashOf(pdf);
+        var hash = HashOf(content);
 
         var duplicateOf = await db.Statements
             .Where(s => s.Id != statement.Id && s.ContentHash == hash && s.Status == StatementStatus.Processed)
@@ -46,7 +49,7 @@ public sealed class StatementImportService(
             .FirstOrDefaultAsync(cancellationToken);
 
         statement.ContentHash = hash;
-        statement.SizeBytes = pdf.Length;
+        statement.SizeBytes = content.Length;
         statement.UpdatedAt = now;
 
         if (duplicateOf is not null)
@@ -60,39 +63,60 @@ public sealed class StatementImportService(
             return new ImportResult(ImportOutcome.DuplicateFile, 0, 0, null);
         }
 
+        // What the file is comes from its bytes, not its name.
+        var format = StatementFileSniffer.Detect(content, statement.Filename);
+        if (format is null)
+        {
+            return await FailAsync(statement, StatementFailure.UnsupportedFile, cancellationToken);
+        }
+
+        statement.Format = format;
         statement.Status = StatementStatus.Processing;
         await db.SaveChangesAsync(cancellationToken);
 
-        PdfTextDocument text;
-        try
-        {
-            text = extractor.Extract(pdf, cancellationToken: cancellationToken);
-        }
-        catch (PdfPasswordRequiredException)
-        {
-            return await FailAsync(statement, StatementFailure.PasswordProtected, cancellationToken);
-        }
-        catch (PdfUnreadableException)
-        {
-            return await FailAsync(statement, StatementFailure.Unreadable, cancellationToken);
-        }
-
-        var referenceDate = DateOnly.FromDateTime((statement.ReceivedAt ?? now).UtcDateTime);
-        var parsed = StatementParser.Parse(text, new StatementParseContext(
+        var context = new StatementParseContext(
             statement.Currency ?? defaultCurrency,
-            referenceDate,
+            DateOnly.FromDateTime((statement.ReceivedAt ?? now).UtcDateTime),
             statement.Sender is null ? null : StatementEmailClassifier.ExtractAddress(statement.Sender),
-            statement.Subject));
+            statement.Subject);
+
+        ParsedStatement parsed;
+        if (format == StatementFileFormat.Pdf)
+        {
+            PdfTextDocument text;
+            try
+            {
+                text = extractor.Extract(content, password, cancellationToken);
+            }
+            catch (PdfPasswordRequiredException)
+            {
+                return await FailAsync(statement, StatementFailure.PasswordProtected, cancellationToken);
+            }
+            catch (PdfPasswordIncorrectException)
+            {
+                return await FailAsync(statement, StatementFailure.PasswordIncorrect, cancellationToken);
+            }
+            catch (PdfUnreadableException)
+            {
+                return await FailAsync(statement, StatementFailure.Unreadable, cancellationToken);
+            }
+
+            parsed = StatementParser.Parse(text, context);
+        }
+        else
+        {
+            parsed = StatementFileParsers.For(format.Value)!.Parse(content, context, cancellationToken);
+        }
 
         if (parsed.Failure != ParseFailure.None)
         {
             statement.ExtractionWarnings = JsonSerializer.Serialize(parsed.Warnings);
-            return await FailAsync(statement, parsed.Failure == ParseFailure.NoTextLayer ? StatementFailure.NoTextLayer : StatementFailure.NoTransactions, cancellationToken);
+            return await FailAsync(statement, FailureCodeOf(format.Value, parsed.Failure), cancellationToken);
         }
 
         var metadata = parsed.Metadata;
         statement.Institution = metadata.Institution ?? statement.Institution;
-        // A statement alert already knows the account from its email; keep that when the PDF doesn't say.
+        // A statement alert already knows the account from its email; keep that when the file doesn't say.
         statement.AccountType = metadata.AccountType != AccountType.Unknown ? metadata.AccountType : statement.AccountType;
         statement.AccountMask = metadata.AccountMask ?? statement.AccountMask;
         statement.Currency = metadata.Currency;
@@ -214,6 +238,15 @@ public sealed class StatementImportService(
         await db.SaveChangesAsync(cancellationToken);
         return alert;
     }
+
+    private static string FailureCodeOf(StatementFileFormat format, ParseFailure failure) => failure switch
+    {
+        ParseFailure.NoTextLayer => StatementFailure.NoTextLayer,
+        ParseFailure.Unrecognized => format == StatementFileFormat.Csv ? StatementFailure.CsvUnrecognized : StatementFailure.OfxUnreadable,
+        ParseFailure.MultipleAccounts => StatementFailure.MultipleAccounts,
+        ParseFailure.TooLarge => StatementFailure.FileTooLarge,
+        _ => StatementFailure.NoTransactions,
+    };
 
     public async Task<ImportResult> FailAsync(Statement statement, string code, CancellationToken cancellationToken)
     {

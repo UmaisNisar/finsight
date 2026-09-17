@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    EF Core migrations for PostgreSQL (Database:Provider=Postgres). Migrations are provider-specific: SQLite's stay in
+    FinSight.Infrastructure/Persistence/Migrations, and these are generated from the same model with the API as the startup
+    project and the Postgres provider selected (the command is in the README, under Deployment).
+    The API references this project so the assembly ships with it.
+  -->
+  <PropertyGroup>
+    <RootNamespace>FinSight.Migrations.Postgres</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FinSight.Infrastructure\FinSight.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

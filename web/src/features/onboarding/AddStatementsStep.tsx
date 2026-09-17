@@ -1,7 +1,7 @@
 import { ArrowUpRight, FileUp, Lightbulb, Plus } from 'lucide-react';
 import { useId, useState } from 'react';
 import { useInstitutions } from '@/api/queries';
-import { DropHighlight, UploadProgressList, usePdfPicker, type UploadRowData } from '@/components/UploadProgressList';
+import { DropHighlight, UploadProgressList, useStatementFilePicker, type UploadRowData } from '@/components/UploadProgressList';
 import { AutoHeight, Collapse } from '@/components/ui/AutoHeight';
 import { Button, buttonStyles } from '@/components/ui/Button';
 import { PopUpButton, type PopUpSection } from '@/components/ui/PopUpButton';
@@ -11,16 +11,17 @@ import { useFileDrop } from '@/hooks/useFileDrop';
 
 export const OTHER_BANK = 'other';
 export const OTHER_BANK_HINT = 'Sign in to your bank’s website, download statements as PDFs (one per month is fine), then add them here.';
+export const STRUCTURED_DOWNLOAD_HINT = 'CSV or QFX transaction downloads work too, and they’re the most accurate.';
 
 /** Long lists get a search field in the menu. */
 const SEARCH_THRESHOLD = 10;
 
 /**
- * A place to drop statement PDFs, or pick them. Highlights (an accent outline and tint, no glow) while files hover.
- * Shared by the add step and anywhere else that takes several PDFs at once.
+ * A place to drop statement files (PDF, CSV, OFX, QFX), or pick them. Highlights (an accent outline and tint, no glow)
+ * while files hover. Shared by the add step and anywhere else that takes several files at once.
  */
-export function PdfDropZone({ onFiles, hint = 'One PDF per month is fine. Add as many as you like.' }: { onFiles: (files: File[]) => void; hint?: string }) {
-  const picker = usePdfPicker(onFiles);
+export function PdfDropZone({ onFiles, hint = 'PDF, CSV, OFX or QFX. Add as many as you like.' }: { onFiles: (files: File[]) => void; hint?: string }) {
+  const picker = useStatementFilePicker(onFiles);
   const drop = useFileDrop(onFiles);
   return (
     <div {...drop.handlers} className="relative flex flex-col items-center rounded-[20px] px-5 py-6 text-center shadow-[inset_0_0_0_1.5px_color-mix(in_srgb,var(--label-tertiary)_30%,transparent)]">
@@ -29,12 +30,12 @@ export function PdfDropZone({ onFiles, hint = 'One PDF per month is fine. Add as
         <FileUp size={21} />
       </span>
       <p className="mt-3 text-[0.9375rem] font-medium">
-        <span className="hidden sm:inline">Drop statement PDFs here</span>
-        <span className="sm:hidden">Add statement PDFs</span>
+        <span className="hidden sm:inline">Drop statement files here</span>
+        <span className="sm:hidden">Add statement files</span>
       </p>
       <p className="caption mt-0.5 max-w-xs">{hint}</p>
       <Button variant="secondary" size="sm" className="mt-3.5" onClick={picker.open}>
-        Choose PDF files
+        Choose files
       </Button>
       <DropHighlight active={drop.dragging} />
     </div>
@@ -98,7 +99,10 @@ export function AddStatementsStep({ rows, onFiles, canContinue, onContinue, onSk
           <div key={bankId} className="fade-in mt-3 flex flex-col gap-3 rounded-[18px] bg-fill/60 px-4 py-3.5 sm:flex-row sm:items-center" data-testid="bank-guide">
             <div className="flex min-w-0 flex-1 items-start gap-3">
               {bank && <InstitutionBadge name={bank.name} size={34} />}
-              <p className="min-w-0 text-[0.875rem] leading-snug text-label-secondary">{bank?.downloadHint?.trim() || OTHER_BANK_HINT}</p>
+              <div className="min-w-0 space-y-1 text-[0.875rem] leading-snug text-label-secondary">
+                <p>{bank?.downloadHint?.trim() || OTHER_BANK_HINT}</p>
+                <p>{STRUCTURED_DOWNLOAD_HINT}</p>
+              </div>
             </div>
             {bank?.signInUrl && (
               <a href={bank.signInUrl} target="_blank" rel="noopener noreferrer" className={buttonStyles({ variant: 'secondary', size: 'sm', className: 'self-start sm:self-center' })}>

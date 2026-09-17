@@ -4,7 +4,7 @@ import type { AiKey, Session } from '@/api/schemas';
 import demoSession from '@/test/fixtures/session.json';
 import settings from '@/test/fixtures/settings.json';
 import { deferred, json, mockApi, renderWithApp } from '@/test/utils';
-import SettingsPage from './SettingsPage';
+import SettingsPage, { aiKeyStatus } from './SettingsPage';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -43,6 +43,11 @@ function setup(initial: AiKey, { session = signedIn, deleteFails = false }: { se
 const aiGroup = () => screen.getByRole('region', { name: 'AI' });
 
 describe('Settings: AI section', () => {
+  it('says when Google refused the key', async () => {
+    setup({ ...userKey, lastFailure: 'key_refused' });
+    expect(await screen.findByText('Google refused your key …Ab3x')).toBeInTheDocument();
+  });
+
   it('shows the user’s key by its hint, with the model', async () => {
     setup(userKey);
     expect(await screen.findByText('Your key …Ab3x')).toBeInTheDocument();
@@ -157,5 +162,11 @@ describe('Settings: loading', () => {
     expect(await screen.findByRole('switch', { name: 'AI insights' })).toBeInTheDocument();
     expect(await screen.findByText('Using FinSight’s built-in AI')).toBeInTheDocument();
     names.forEach((name, i) => expect(screen.getByRole('region', { name })).toBe(shells[i]));
+  });
+});
+
+describe('aiKeyStatus', () => {
+  it('names a refused server key when the user has none', () => {
+    expect(aiKeyStatus({ ...serverKey, lastFailure: 'key_refused' })).toBe('Google refused the server’s Gemini key');
   });
 });

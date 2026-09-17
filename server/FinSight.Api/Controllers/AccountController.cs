@@ -4,12 +4,14 @@ using FinSight.Api.Middleware;
 using FinSight.Core.Categories;
 using FinSight.Core.Domain;
 using FinSight.Core.Statements;
+using FinSight.Infrastructure.Email;
 using FinSight.Infrastructure.Gmail;
 using FinSight.Infrastructure.Persistence;
 using FinSight.Infrastructure.Pipeline;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -24,11 +26,12 @@ public sealed class AccountController(FinSightDbContext db) : ControllerBase
     private static readonly string[] DateFormats = ["MMM d, yyyy", "d MMM yyyy", "yyyy-MM-dd", "MM/dd/yyyy", "dd/MM/yyyy"];
 
     [HttpGet("settings")]
-    public async Task<SettingsDto> GetSettings(CancellationToken cancellationToken) =>
-        (await db.Users.AsNoTracking().SingleAsync(cancellationToken)).Settings.ToDto();
+    public async Task<SettingsDto> GetSettings([FromServices] EmailAvailability email, CancellationToken cancellationToken) =>
+        (await db.Users.AsNoTracking().SingleAsync(cancellationToken)).Settings.ToDto(email.IsConfigured);
 
     [HttpPut("settings")]
-    public async Task<ActionResult<SettingsDto>> UpdateSettings(SettingsDto request, CancellationToken cancellationToken)
+    public async Task<ActionResult<SettingsDto>> UpdateSettings(UpdateSettingsRequest request, [FromServices] EmailAvailability email, [FromServices] TimeProvider time,
+        CancellationToken cancellationToken)
     {
         if (!Currencies.IsSupported(request.Currency))
         {
@@ -41,6 +44,55 @@ public sealed class AccountController(FinSightDbContext db) : ControllerBase
         }
 
         var user = await db.Users.SingleAsync(cancellationToken);
+        var current = user.Settings;
+        var autoScan = request.AutoScanEnabled ?? current.AutoScanEnabled;
+        // Automatic import only runs after automatic scans, so it turns off with them and starts off when they're turned back on.
+        var autoImport = autoScan && (request.AutoImportEnabled ?? current.AutoImportEnabled);
+        var digest = request.MonthlyDigestEnabled ?? current.MonthlyDigestEnabled;
+
+        // Only switching something on is checked, so an unrelated change still saves after Gmail expires or email is removed.
+        var turningOnScan = autoScan && !current.AutoScanEnabled;
+        var turningOnDigest = digest && !current.MonthlyDigestEnabled;
+        if ((turningOnScan || turningOnDigest) && user.IsDemo)
+        {
+            return ApiErrors.Problem(StatusCodes.Status409Conflict, "demo_mode", "Automatic scans and summary emails aren't available in the demo.");
+        }
+
+        if (turningOnScan)
+        {
+            var connection = await db.GmailConnections.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+            if (connection is null)
+            {
+                return ApiErrors.Map(new GmailNotConnectedException());
+            }
+
+            if (connection.Status == GmailConnectionStatus.Expired)
+            {
+                return ApiErrors.Map(new GmailAuthExpiredException());
+            }
+        }
+
+        if (turningOnDigest && !email.IsConfigured)
+        {
+            return ApiErrors.Problem(StatusCodes.Status409Conflict, "email_not_configured", "Email isn't set up on this server.");
+        }
+
+        if (turningOnScan)
+        {
+            // The scheduler gives the user a daily slot on its next run.
+            user.NextAutoScanAt = null;
+        }
+
+        if (autoImport && !current.AutoImportEnabled)
+        {
+            // Only statements found from now on are imported automatically, never an existing backlog.
+            user.AutoImportEnabledAt = time.GetUtcNow();
+        }
+        else if (!autoImport)
+        {
+            user.AutoImportEnabledAt = null;
+        }
+
         user.Settings = new UserSettings
         {
             Currency = request.Currency.ToUpperInvariant(),
@@ -48,11 +100,25 @@ public sealed class AccountController(FinSightDbContext db) : ControllerBase
             Theme = request.Theme,
             AiCategorizationEnabled = request.AiCategorizationEnabled,
             AiInsightsEnabled = request.AiInsightsEnabled,
-            NotificationsEnabled = request.NotificationsEnabled,
+            AutoScanEnabled = autoScan,
+            AutoImportEnabled = autoImport,
+            MonthlyDigestEnabled = digest,
         };
         await db.SaveChangesAsync(cancellationToken);
-        return user.Settings.ToDto();
+        return user.Settings.ToDto(email.IsConfigured);
     }
+
+    /// <summary>Emails the signed-in user last month's summary now, marked as a test. Works whether or not summaries are switched on.</summary>
+    [HttpPost("settings/digest/test")]
+    [EnableRateLimiting(RateLimits.TestEmail)]
+    public async Task<ActionResult<TestEmailResponse>> SendTestDigest([FromServices] DigestService digests, CancellationToken cancellationToken) =>
+        await digests.SendTestAsync(User.GetUserId(), cancellationToken) switch
+        {
+            TestDigestResult.Sent => new TestEmailResponse(true),
+            TestDigestResult.DemoUser => ApiErrors.Problem(StatusCodes.Status409Conflict, "demo_mode", "Summary emails aren't available in the demo."),
+            TestDigestResult.NotConfigured => ApiErrors.Problem(StatusCodes.Status409Conflict, "email_not_configured", "Email isn't set up on this server."),
+            _ => ApiErrors.Problem(StatusCodes.Status502BadGateway, "email_failed", "The test email couldn't be sent. Try again later."),
+        };
 
     [HttpGet("categories")]
     public async Task<IReadOnlyList<CategoryGroupDto>> Categories(CancellationToken cancellationToken)

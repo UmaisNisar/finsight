@@ -91,7 +91,7 @@ public sealed class GeminiKeyResolverTests
             var resolver = new GeminiKeyResolver(db, userContext, testDb.Protector, Options.Create(new GeminiOptions()));
             var client = new GeminiClient(new HttpClient(new StubHttpHandler()), resolver, Options.Create(new GeminiOptions()),
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<GeminiClient>.Instance);
-            return await new GeminiService(client, resolver).IsConfiguredAsync(CancellationToken.None);
+            return await GeminiChainTests.Service(client, resolver).IsConfiguredAsync(CancellationToken.None);
         }
     }
 

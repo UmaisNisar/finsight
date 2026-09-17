@@ -4,6 +4,7 @@ using FinSight.Core.Abstractions;
 using FinSight.Core.Analytics;
 using FinSight.Core.Categories;
 using FinSight.Core.Insights;
+using FinSight.Infrastructure.Gemini;
 using FinSight.Infrastructure.Insights;
 using FinSight.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -18,7 +19,15 @@ namespace FinSight.Api.Controllers;
 [Authorize]
 [ApiController]
 [Route("api")]
-public sealed class InsightsController(FinSightDbContext db, DashboardService dashboard, AnalysisService analysis, IGeminiService gemini) : ControllerBase
+public sealed partial class InsightsController(
+    FinSightDbContext db,
+    DashboardService dashboard,
+    AnalysisService analysis,
+    IGeminiService gemini,
+    IGeminiKeyResolver keys,
+    AiQuota quota,
+    AiKeyHealth keyHealth,
+    ILogger<InsightsController> logger) : ControllerBase
 {
     /// <summary>Deterministic financial summary for a period: every number on the overview.</summary>
     [HttpGet("summary")]
@@ -54,7 +63,10 @@ public sealed class InsightsController(FinSightDbContext db, DashboardService da
         return await ToResponseAsync(period, stored, cancellationToken);
     }
 
-    /// <summary>Asks Gemini to interpret the computed facts for the period. Validated before it is stored or returned.</summary>
+    /// <summary>
+    /// Asks Gemini to interpret the computed facts for the period. Validated before it is stored or returned. When Gemini isn't
+    /// available, FinSight writes the analysis from the same facts and the response says why (<c>source</c>, <c>fallbackReason</c>).
+    /// </summary>
     [HttpPost("analysis/generate")]
     [EnableRateLimiting(RateLimits.Ai)]
     public async Task<ActionResult<AnalysisResponse>> GenerateAnalysis([FromQuery] PeriodQuery query, CancellationToken cancellationToken)
@@ -104,9 +116,10 @@ public sealed class InsightsController(FinSightDbContext db, DashboardService da
 
                 reviewed = true;
             }
-            catch (AiUnavailableException)
+            catch (AiUnavailableException ex)
             {
-                // Recurring detection is deterministic; the AI only labels it. Fall back silently.
+                // Recurring detection is deterministic; the AI only labels it. Rule-based labels are used instead.
+                LogRecurringFallback(logger, ex.Failure);
             }
         }
 
@@ -129,8 +142,24 @@ public sealed class InsightsController(FinSightDbContext db, DashboardService da
     private async Task<AnalysisResponse> ToResponseAsync(PeriodDto period, StoredAnalysis stored, CancellationToken cancellationToken)
     {
         var settings = (await db.Users.AsNoTracking().SingleAsync(cancellationToken)).Settings;
+        var configured = await gemini.IsConfiguredAsync(cancellationToken);
         return new AnalysisResponse(period, stored.State, stored.Analysis, stored.Corrections, stored.Model, stored.GeneratedAt,
-            new AnalysisAvailability(settings.AiInsightsEnabled, await gemini.IsConfiguredAsync(cancellationToken)), settings.Currency);
+            new AnalysisAvailability(settings.AiInsightsEnabled, configured, configured ? await BlockedAsync(cancellationToken) : null), settings.Currency,
+            stored.Analysis is null ? null : stored.Source, stored.FallbackReason);
+    }
+
+    /// <summary>Whether a new try with Gemini is known to be pointless right now.</summary>
+    private async Task<string?> BlockedAsync(CancellationToken cancellationToken)
+    {
+        if (keyHealth.Get(Auth.FinSightClaims.GetUserId(User)) is { Failure: AiFailure.KeyRefused })
+        {
+            return AnalysisFallback.KeyRefused;
+        }
+
+        var key = await keys.ResolveDetailsAsync(cancellationToken);
+        return key is not null && quota.Peek(key.UserId, key.Email, !key.IsUserKey, AiCallKind.Analysis) != AiQuotaDecision.Allowed
+            ? AnalysisFallback.LimitReached
+            : null;
     }
 
     private static RecurringDto ToDto(RecurringSeries s, Func<string, CategoryDefinition> resolve, RecurringReview? review)
@@ -138,14 +167,15 @@ public sealed class InsightsController(FinSightDbContext db, DashboardService da
         var category = resolve(s.CategoryId);
         var kind = s.IsIncome ? RecurringKindDto.Income
             : review is not null && review.Kind != RecurringKind.NotRecurring ? (RecurringKindDto)(int)review.Kind
-            : category.Id == CategoryTaxonomy.Subscriptions ? RecurringKindDto.Subscription
-            : category.Id == "health.fitness" ? RecurringKindDto.Membership
-            : category.IsFixed || category.GroupId == "housing" ? RecurringKindDto.Bill
+            : RecurringLabeler.Label(s.Merchant, category) is { } rule ? (RecurringKindDto)(int)rule
             : RecurringKindDto.Other;
 
         return new RecurringDto(s.MerchantKey, s.Merchant, category.Id, category.Name, kind, review is not null && !s.IsIncome, s.Frequency,
             s.TypicalAmount, s.MonthlyEquivalent, s.AmountVaries, s.Occurrences, s.FirstDate, s.LastDate, s.NextExpectedDate, s.IsActive, s.Confidence, s.IsIncome);
     }
+
+    [LoggerMessage(LogLevel.Warning, "Recurring payments labelled by rules: AI review unavailable ({Failure})")]
+    private static partial void LogRecurringFallback(ILogger logger, AiFailure failure);
 
     private static ObjectResult InvalidPeriod() =>
         ApiErrors.BadRequest("invalid_period", "Choose a valid time period. Custom ranges need a start and end date, up to three years apart.");

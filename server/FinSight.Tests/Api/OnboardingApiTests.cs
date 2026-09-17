@@ -141,7 +141,6 @@ public sealed class AiKeyApiTests(AiKeyApiFactory factory) : IClassFixture<AiKey
     [InlineData(HttpStatusCode.BadRequest, 400, "invalid_api_key")]
     [InlineData(HttpStatusCode.Unauthorized, 400, "invalid_api_key")]
     [InlineData(HttpStatusCode.Forbidden, 400, "invalid_api_key")]
-    [InlineData(HttpStatusCode.TooManyRequests, 429, "rate_limited")]
     [InlineData(HttpStatusCode.InternalServerError, 503, "ai_unavailable")]
     [InlineData(HttpStatusCode.ServiceUnavailable, 503, "ai_unavailable")]
     public async Task Google_answers_other_than_ok_save_nothing(HttpStatusCode google, int expectedStatus, string expectedCode)
@@ -162,6 +161,54 @@ public sealed class AiKeyApiTests(AiKeyApiFactory factory) : IClassFixture<AiKey
         }
 
         (await (await client.GetAsync("/api/ai/key")).JsonAsync()).GetProperty("hasUserKey").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_key_google_is_rate_limiting_is_recognised_and_saved()
+    {
+        var client = await factory.CreateGoogleUserClientAsync();
+        var key = ApiTestData.NewKey();
+        factory.KeyCheck.Status(HttpStatusCode.TooManyRequests, """{"error":{"status":"RESOURCE_EXHAUSTED"}}""");
+
+        var response = await client.PutAsJsonAsync("/api/ai/key", new { apiKey = key });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "a 429 means Google recognised the key; it is only busy");
+        (await response.JsonAsync()).GetProperty("hasUserKey").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_key_from_a_project_without_the_gemini_api_gets_its_own_message()
+    {
+        var client = await factory.CreateGoogleUserClientAsync();
+        var key = ApiTestData.NewKey();
+        factory.KeyCheck.Status(HttpStatusCode.Forbidden,
+            """{"error":{"code":403,"message":"Generative Language API has not been used in project 123 before or it is disabled.","status":"PERMISSION_DENIED","details":[{"reason":"SERVICE_DISABLED"}]}}""");
+
+        var response = await client.PutAsJsonAsync("/api/ai/key", new { apiKey = key });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.JsonAsync();
+        body.GetProperty("code").GetString().Should().Be("invalid_api_key");
+        body.GetProperty("message").GetString().Should().Be("That key belongs to a project without the Gemini API switched on. Create the key in Google AI Studio instead.");
+        (await (await client.GetAsync("/api/ai/key")).JsonAsync()).GetProperty("hasUserKey").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task The_status_reports_a_refused_key_until_a_new_key_is_saved()
+    {
+        var client = await factory.CreateGoogleUserClientAsync();
+        var userId = await ApiTestData.UserIdAsync(client);
+        var health = factory.Services.GetRequiredService<FinSight.Infrastructure.Gemini.AiKeyHealth>();
+
+        (await (await client.GetAsync("/api/ai/key")).JsonAsync()).GetProperty("lastFailure").ValueKind.Should().Be(JsonValueKind.Null);
+
+        health.Record(userId, FinSight.Core.Abstractions.AiFailure.KeyRefused);
+        var refused = await (await client.GetAsync("/api/ai/key")).JsonAsync();
+        refused.GetProperty("lastFailure").GetString().Should().Be("key_refused");
+        refused.GetProperty("lastFailureAt").ValueKind.Should().Be(JsonValueKind.String);
+
+        await ApiTestData.SaveKeyAsync(factory, client, ApiTestData.NewKey());
+        (await (await client.GetAsync("/api/ai/key")).JsonAsync()).GetProperty("lastFailure").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
     [Fact]

@@ -12,10 +12,14 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace FinSight.Tests.TestHelpers;
 
-/// <summary>Runs the real API against a throwaway SQLite database, with demo mode on and no external credentials.</summary>
+/// <summary>
+/// Runs the real API against a throwaway SQLite database (or PostgreSQL, see <see cref="PostgresTestDatabase"/>), with demo mode on
+/// and no external credentials.
+/// </summary>
 public class FinSightApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "finsight-tests", Guid.NewGuid().ToString("N"));
+    private PostgresTestDatabase? _postgres;
 
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -40,13 +44,37 @@ public class FinSightApiFactory : WebApplicationFactory<Program>
     /// <summary>The server-level Gemini key. Empty by default, so AI is available only with a user's own key.</summary>
     protected virtual string GeminiApiKey => "";
 
+    /// <summary>PostgreSQL instead of SQLite. Off unless FINSIGHT_TEST_PROVIDER=Postgres and FINSIGHT_TEST_POSTGRES are set.</summary>
+    protected virtual bool UsePostgres => PostgresTestDatabase.IsDefaultProvider;
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         Directory.CreateDirectory(_directory);
         builder.UseEnvironment(HostEnvironment);
-        builder.UseSetting("ConnectionStrings:FinSight", $"Data Source={DatabasePath}");
+        if (UsePostgres)
+        {
+            _postgres ??= PostgresTestDatabase.Create();
+            builder.UseSetting("Database:Provider", "Postgres");
+            builder.UseSetting("ConnectionStrings:FinSight", _postgres.ConnectionString);
+        }
+        else
+        {
+            builder.UseSetting("ConnectionStrings:FinSight", $"Data Source={DatabasePath}");
+        }
+
         builder.UseSetting("DataProtection:KeysPath", Path.Combine(_directory, "keys"));
+
+        // Test key rings are temporary. Without this, a Production host on Linux (CI) refuses to start with an unencrypted key ring.
+        builder.UseSetting("DataProtection:AllowUnprotectedKeys", "true");
         builder.UseSetting("Demo:Enabled", "true");
+
+        // The scheduler is driven directly by tests (AutomationApiTests), never by its timer; email goes to a temporary folder.
+        builder.UseSetting("Automation:Enabled", "false");
+        builder.UseSetting("Email:PickupDirectory", Path.Combine(_directory, "mail"));
+
+        // Pending AI categorization retries are driven directly by tests (PendingCategorizationApiTests), never in the background.
+        builder.UseSetting("Ai:PendingRetryEnabled", "false");
+        builder.UseSetting("Gemini:RetryDelaySeconds", "0");
         builder.UseSetting("Google:ClientId", GoogleClientId);
         builder.UseSetting("Google:ClientSecret", GoogleClientSecret);
         builder.UseSetting("Gemini:ApiKey", GeminiApiKey);
@@ -86,6 +114,7 @@ public class FinSightApiFactory : WebApplicationFactory<Program>
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
+        _postgres?.Dispose();
         try
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();

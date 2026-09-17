@@ -23,3 +23,12 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+
+  # Base images in the Dockerfile are pinned by digest; this keeps the digests current.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        patterns: ["*"]

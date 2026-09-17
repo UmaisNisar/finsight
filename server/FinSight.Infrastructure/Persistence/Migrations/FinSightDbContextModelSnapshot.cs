@@ -265,6 +265,10 @@ namespace FinSight.Infrastructure.Persistence.Migrations
                         .HasMaxLength(260)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Format")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Institution")
                         .HasColumnType("TEXT");
 
@@ -453,7 +457,20 @@ namespace FinSight.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("AutoImportEnabledAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DigestFailedFor")
+                        .HasMaxLength(7)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DigestFailures")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("DigestNextAttemptAt")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("DisplayName")
@@ -479,6 +496,13 @@ namespace FinSight.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsDemo")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("LastDigestSentFor")
+                        .HasMaxLength(7)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("NextAutoScanAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long?>("OnboardingCompletedAt")
                         .HasColumnType("INTEGER");
 
@@ -492,6 +516,12 @@ namespace FinSight.Infrastructure.Persistence.Migrations
                             b1.Property<bool>("AiInsightsEnabled")
                                 .HasColumnType("INTEGER");
 
+                            b1.Property<bool>("AutoImportEnabled")
+                                .HasColumnType("INTEGER");
+
+                            b1.Property<bool>("AutoScanEnabled")
+                                .HasColumnType("INTEGER");
+
                             b1.Property<string>("Currency")
                                 .IsRequired()
                                 .HasMaxLength(3)
@@ -502,7 +532,7 @@ namespace FinSight.Infrastructure.Persistence.Migrations
                                 .HasMaxLength(32)
                                 .HasColumnType("TEXT");
 
-                            b1.Property<bool>("NotificationsEnabled")
+                            b1.Property<bool>("MonthlyDigestEnabled")
                                 .HasColumnType("INTEGER");
 
                             b1.Property<string>("Theme")
@@ -516,6 +546,8 @@ namespace FinSight.Infrastructure.Persistence.Migrations
                     b.HasIndex("GoogleSubject")
                         .IsUnique()
                         .HasFilter("GoogleSubject IS NOT NULL");
+
+                    b.HasIndex("NextAutoScanAt");
 
                     b.ToTable("Users");
                 });

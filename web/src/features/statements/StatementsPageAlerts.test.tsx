@@ -93,13 +93,13 @@ describe('Statements page with statement alerts', () => {
     const uploads = () => fetchSpy.mock.calls.filter(([input, init]) => String(input) === '/api/uploads/statements' && init?.method === 'POST').map(([, init]) => init?.body as FormData);
 
     // The header's button and picker come first; the alert card has its own.
-    expect(screen.getAllByRole('button', { name: 'Upload PDFs' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Upload statements' })).toHaveLength(2);
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     expect(input.closest('[data-testid="statement-alert"]')).toBeNull();
     expect(input).toHaveAttribute('multiple');
     act(() => fireEvent.change(input, { target: { files: [new File(['%PDF'], 'jul.pdf', { type: 'application/pdf' }), new File(['%PDF'], 'aug.pdf', { type: 'application/pdf' })] } }));
 
-    const list = await screen.findByRole('list', { name: 'Uploaded PDFs' });
+    const list = await screen.findByRole('list', { name: 'Uploaded files' });
     await waitFor(() => expect(uploads()).toHaveLength(1));
     expect(within(list).getAllByRole('listitem').map((li) => li.dataset.state)).toEqual(['uploading', 'queued']);
 

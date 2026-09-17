@@ -4,6 +4,7 @@ using FinSight.Core.Abstractions;
 using FinSight.Core.Domain;
 using FinSight.Core.Insights;
 using FinSight.Tests.TestHelpers;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FinSight.Tests.Api;
 
@@ -16,6 +17,7 @@ public sealed class InsightsApiTests : IClassFixture<AiApiFactory>
     {
         _factory = factory;
         var gemini = factory.Gemini;
+        gemini.IsConfigured = true;
         gemini.Categorize = _ => [];
         gemini.ReviewRecurring = _ => [];
         gemini.Analyze = facts => new GeminiAnalysisResult(AnalysisValidator.Validate(new RawAnalysis
@@ -37,6 +39,8 @@ public sealed class InsightsApiTests : IClassFixture<AiApiFactory>
         var generated = await (await client.PostAsync("/api/analysis/generate?period=last-month", null)).JsonAsync();
         generated.GetProperty("state").GetString().Should().Be("fresh");
         generated.GetProperty("model").GetString().Should().Be("fake-model");
+        generated.GetProperty("source").GetString().Should().Be("ai");
+        generated.GetProperty("fallbackReason").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Null);
         generated.GetProperty("analysis").GetProperty("keyInsights").GetArrayLength().Should().Be(1);
         // The invented $123,456 matches nothing in the data and is flagged.
         generated.GetProperty("corrections").EnumerateArray().Should().Contain(c => c.GetProperty("message").GetString()!.Contains("123,456"));
@@ -89,20 +93,98 @@ public sealed class InsightsApiTests : IClassFixture<AiApiFactory>
     }
 
     [Theory]
-    [InlineData(AiFailure.RateLimited, 429, "ai_rate_limited")]
-    [InlineData(AiFailure.Timeout, 503, "ai_unavailable")]
-    [InlineData(AiFailure.InvalidResponse, 503, "ai_unavailable")]
-    public async Task Ai_failures_map_to_friendly_errors_and_keep_the_dashboard_working(AiFailure failure, int status, string code)
+    [InlineData(AiFailure.RateLimited, "quota_exhausted")]
+    [InlineData(AiFailure.KeyRefused, "key_refused")]
+    [InlineData(AiFailure.LimitReached, "limit_reached")]
+    [InlineData(AiFailure.Timeout, "unavailable")]
+    [InlineData(AiFailure.InvalidResponse, "unavailable")]
+    [InlineData(AiFailure.Unavailable, "unavailable")]
+    public async Task When_gemini_fails_finsight_writes_the_analysis_itself_and_says_why(AiFailure failure, string reason)
     {
         var client = await _factory.CreateDemoClientAsync();
         _factory.Gemini.Analyze = _ => throw new AiUnavailableException(failure);
 
         var response = await client.PostAsync("/api/analysis/generate?period=last-month", null);
 
-        ((int)response.StatusCode).Should().Be(status);
-        (await response.ErrorCodeAsync()).Should().Be(code);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var generated = await response.JsonAsync();
+        generated.GetProperty("state").GetString().Should().Be("fresh");
+        generated.GetProperty("source").GetString().Should().Be("builtIn");
+        generated.GetProperty("fallbackReason").GetString().Should().Be(reason);
+        generated.GetProperty("model").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Null);
+        generated.GetProperty("analysis").GetProperty("summary").GetString().Should().StartWith("In ");
+        generated.GetProperty("corrections").GetArrayLength().Should().Be(0);
+
+        var stored = await (await client.GetAsync("/api/analysis?period=last-month")).JsonAsync();
+        stored.GetProperty("source").GetString().Should().Be("builtIn");
+        stored.GetProperty("fallbackReason").GetString().Should().Be(reason);
+        stored.GetProperty("model").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Null);
         (await client.GetAsync("/api/summary?period=last-month")).StatusCode.Should().Be(HttpStatusCode.OK);
-        (await (await client.GetAsync("/api/analysis?period=last-month")).JsonAsync()).GetProperty("state").GetString().Should().Be("none");
+    }
+
+    [Fact]
+    public async Task Without_a_key_the_analysis_is_written_without_calling_ai()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        _factory.Gemini.IsConfigured = false;
+        var calls = _factory.Gemini.AnalysisCalls.Count;
+
+        var generated = await (await client.PostAsync("/api/analysis/generate?period=last-month", null)).JsonAsync();
+
+        generated.GetProperty("source").GetString().Should().Be("builtIn");
+        generated.GetProperty("fallbackReason").GetString().Should().Be("not_configured");
+        generated.GetProperty("availability").GetProperty("configured").GetBoolean().Should().BeFalse();
+        _factory.Gemini.AnalysisCalls.Should().HaveCount(calls);
+    }
+
+    [Fact]
+    public async Task A_built_in_analysis_is_replaced_once_ai_answers_again()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        var working = _factory.Gemini.Analyze;
+        _factory.Gemini.Analyze = _ => throw new AiUnavailableException(AiFailure.RateLimited);
+        (await (await client.PostAsync("/api/analysis/generate?period=last-month", null)).JsonAsync()).GetProperty("source").GetString().Should().Be("builtIn");
+
+        _factory.Gemini.Analyze = working;
+        var generated = await (await client.PostAsync("/api/analysis/generate?period=last-month", null)).JsonAsync();
+
+        generated.GetProperty("source").GetString().Should().Be("ai");
+        generated.GetProperty("model").GetString().Should().Be("fake-model");
+        var stored = await (await client.GetAsync("/api/analysis?period=last-month")).JsonAsync();
+        stored.GetProperty("source").GetString().Should().Be("ai");
+        stored.GetProperty("fallbackReason").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task A_fresh_ai_analysis_is_kept_when_a_later_try_fails()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        var first = await (await client.PostAsync("/api/analysis/generate?period=last-month", null)).JsonAsync();
+        _factory.Gemini.Analyze = _ => throw new AiUnavailableException(AiFailure.RateLimited);
+
+        var second = await (await client.PostAsync("/api/analysis/generate?period=last-month", null)).JsonAsync();
+
+        second.GetProperty("source").GetString().Should().Be("ai");
+        second.GetProperty("analysis").GetProperty("summary").GetString().Should().Be(first.GetProperty("analysis").GetProperty("summary").GetString());
+    }
+
+    [Fact]
+    public async Task Availability_says_when_a_new_try_with_ai_cannot_help()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        var userId = await ApiTestData.UserIdAsync(client);
+        var health = _factory.Services.GetRequiredService<FinSight.Infrastructure.Gemini.AiKeyHealth>();
+
+        (await (await client.GetAsync("/api/analysis?period=last-month")).JsonAsync()).GetProperty("availability").GetProperty("blocked").ValueKind
+            .Should().Be(System.Text.Json.JsonValueKind.Null);
+
+        health.Record(userId, AiFailure.KeyRefused);
+        (await (await client.GetAsync("/api/analysis?period=last-month")).JsonAsync()).GetProperty("availability").GetProperty("blocked").GetString()
+            .Should().Be("key_refused");
+
+        health.Clear(userId);
+        (await (await client.GetAsync("/api/analysis?period=last-month")).JsonAsync()).GetProperty("availability").GetProperty("blocked").ValueKind
+            .Should().Be(System.Text.Json.JsonValueKind.Null);
     }
 
     [Theory]
@@ -148,7 +230,8 @@ public sealed class InsightsApiTests : IClassFixture<AiApiFactory>
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var recurring = await response.JsonAsync();
         recurring.GetProperty("aiReviewed").GetBoolean().Should().BeFalse();
-        recurring.GetProperty("items").EnumerateArray().Should().Contain(i => i.GetProperty("merchant").GetString() == "Netflix" && i.GetProperty("kind").GetString() == "subscription");
+        recurring.GetProperty("items").EnumerateArray().Should().Contain(i => i.GetProperty("merchant").GetString() == "Netflix" && i.GetProperty("kind").GetString() == "subscription"
+            && !i.GetProperty("kindFromAi").GetBoolean());
     }
 
     [Fact]

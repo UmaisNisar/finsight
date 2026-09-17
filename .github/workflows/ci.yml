@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    # Version tags run CI too; the Release workflow publishes the image once it passes.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -45,6 +47,85 @@ jobs:
           name: backend-test-results
           path: TestResults
           retention-days: 7
+
+  postgres:
+    name: Backend on PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          # A throwaway service container reachable only from this job.
+          POSTGRES_USER: finsight
+          POSTGRES_PASSWORD: finsight-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U finsight"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Each test class creates and drops its own database on this server (FinSight.Tests/TestHelpers/PostgresTestDatabase.cs).
+      FINSIGHT_TEST_POSTGRES: Host=localhost;Port=5432;Username=finsight;Password=finsight-ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore FinSight.slnx
+
+      - name: Build
+        run: dotnet build FinSight.slnx --no-restore --configuration Release
+
+      # Migrations match the model, converters, ownership filters, bulk deletes and concurrent startup migration.
+      - name: Test PostgreSQL persistence
+        run: dotnet test FinSight.slnx --no-build --configuration Release --filter "Category=Postgres" --logger "trx;LogFileName=postgres.trx" --results-directory TestResults
+
+      # The end-to-end API suite with PostgreSQL in place of SQLite. The one test that reads the SQLite file directly is excluded;
+      # PostgresPersistenceTests checks encryption at rest on PostgreSQL instead.
+      - name: Test API on PostgreSQL
+        env:
+          FINSIGHT_TEST_PROVIDER: Postgres
+        run: dotnet test FinSight.slnx --no-build --configuration Release --filter "FullyQualifiedName~FinSight.Tests.Api&Category!=Postgres&FullyQualifiedName!~Transaction_descriptions_are_encrypted_in_the_database_file" --logger "trx;LogFileName=postgres-api.trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: postgres-test-results
+          path: TestResults
+          retention-days: 7
+
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Builds the Dockerfile (web app, Release publish with warnings as errors) without pushing, so a broken image fails
+      # the pull request instead of the release. Publishing happens in release.yml.
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   web:
     name: Web (React)

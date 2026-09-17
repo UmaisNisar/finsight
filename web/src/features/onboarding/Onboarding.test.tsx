@@ -9,7 +9,7 @@ import { ToastProvider } from '@/app/providers/ToastProvider';
 import { alert, CIBC_HINT } from '@/test/alerts';
 import settings from '@/test/fixtures/settings.json';
 import { deferred, json, mockApi, testQueryClient } from '@/test/utils';
-import { OTHER_BANK_HINT } from './AddStatementsStep';
+import { OTHER_BANK_HINT, STRUCTURED_DOWNLOAD_HINT } from './AddStatementsStep';
 import { deriveSteps, inferSource, NO_CHOICES, type OnboardingChoices } from './steps';
 
 afterEach(() => {
@@ -174,7 +174,7 @@ describe('Connect Gmail', () => {
     await expectCurrent(/Add your statements/);
     expect(stepTitles()).toEqual(['Add your statements', 'Add your Gemini API key', 'Import and analyze', 'Finish']);
     expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Choose PDF files' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Choose files' })).toBeInTheDocument();
   });
 
   it('starts scanning straight after connecting, shows live progress, then the results to confirm', async () => {
@@ -590,6 +590,7 @@ describe('Add your statements (download path)', () => {
     await choose('CIBC');
     const guide = await screen.findByTestId('bank-guide');
     expect(guide).toHaveTextContent(CIBC_HINT);
+    expect(guide).toHaveTextContent(STRUCTURED_DOWNLOAD_HINT);
     const link = within(guide).getByRole('link', { name: /Open CIBC/ });
     expect(link).toHaveAttribute('href', 'https://www.cibconline.cibc.com/');
     expect(link).toHaveAttribute('target', '_blank');
@@ -625,7 +626,7 @@ describe('Add your statements (download path)', () => {
 
     act(() => fireEvent.click(continueButton()));
     await expectCurrent(/Gemini API key/);
-    expect(stepCard(/Add your statements/)).toHaveTextContent('1 PDF added');
+    expect(stepCard(/Add your statements/)).toHaveTextContent('1 file added');
   });
 });
 

@@ -327,7 +327,7 @@ function Body({ data, analysis, period, currency, dateFormat }: { data?: Summary
 
       <p className="caption text-center">
         Insights are generated from your imported statements and are for information only, not financial advice.
-        {analysis?.model && ` Written by ${analysis.model}; all figures calculated by FinSight.`}
+        {analysis?.model && analysis.source !== 'builtIn' && ` Written by ${analysis.model}; all figures calculated by FinSight.`}
       </p>
     </div>
   );

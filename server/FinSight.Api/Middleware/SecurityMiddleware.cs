@@ -48,7 +48,11 @@ public sealed class CsrfHeaderMiddleware(RequestDelegate next)
         var method = context.Request.Method;
         var isSafe = HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method);
 
-        if (!isSafe && context.Request.Path.StartsWithSegments("/api") && context.Request.Headers[HeaderName] != "1")
+        // The unsubscribe link in summary emails is authorized by its signed token alone and reads no cookie, and mail clients
+        // posting a one-click unsubscribe (RFC 8058) can't add headers.
+        var tokenAuthorized = context.Request.Path.StartsWithSegments(FinSight.Api.Controllers.EmailController.UnsubscribePath);
+
+        if (!isSafe && !tokenAuthorized && context.Request.Path.StartsWithSegments("/api") && context.Request.Headers[HeaderName] != "1")
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             await context.Response.WriteAsJsonAsync(ApiErrors.Create(403, "csrf_rejected", "This request was blocked for your security. Reload the page and try again."));
@@ -68,7 +72,9 @@ public sealed class UserContextMiddleware(RequestDelegate next)
 {
     public async Task InvokeAsync(HttpContext context, UserContext userContext, FinSightDbContext db, SessionService sessions, IMemoryCache cache)
     {
-        if (context.User.Identity?.IsAuthenticated == true && context.User.FindFirst(FinSightClaims.UserId) is not null)
+        // The unsubscribe endpoint acts only for the user named in its token, so a stale session in the same browser doesn't block it.
+        if (context.User.Identity?.IsAuthenticated == true && context.User.FindFirst(FinSightClaims.UserId) is not null
+            && !context.Request.Path.StartsWithSegments(FinSight.Api.Controllers.EmailController.UnsubscribePath))
         {
             var userId = context.User.GetUserId();
             userContext.SetUser(userId);

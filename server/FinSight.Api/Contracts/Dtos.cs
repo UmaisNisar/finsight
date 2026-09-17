@@ -30,16 +30,41 @@ public sealed record GoogleDiagnostics(
     string RedirectUri,
     IReadOnlyList<string> Scopes);
 
+/// <param name="EmailConfigured">Read-only: whether this server can send email. Monthly summaries are unavailable without it.</param>
 public sealed record SettingsDto(
     string Currency,
     string DateFormat,
     ThemePreference Theme,
     bool AiCategorizationEnabled,
     bool AiInsightsEnabled,
-    bool NotificationsEnabled);
+    bool AutoScanEnabled,
+    bool AutoImportEnabled,
+    bool MonthlyDigestEnabled,
+    bool EmailConfigured);
+
+/// <summary>
+/// Saves settings. The automation switches are optional so an older client that doesn't send them leaves them as they are;
+/// read-only fields of <see cref="SettingsDto"/> are ignored.
+/// </summary>
+public sealed record UpdateSettingsRequest(
+    string Currency,
+    string DateFormat,
+    ThemePreference Theme,
+    bool AiCategorizationEnabled,
+    bool AiInsightsEnabled,
+    bool? AutoScanEnabled = null,
+    bool? AutoImportEnabled = null,
+    bool? MonthlyDigestEnabled = null);
+
+public sealed record TestEmailResponse(bool Sent);
 
 /// <summary>Which Gemini key AI features use. The key itself is never returned; <c>Hint</c> is "…" plus its last four characters.</summary>
-public sealed record AiKeyStatusDto(bool HasUserKey, string? Hint, bool ServerKeyAvailable, string Model);
+/// <param name="Model">The primary model. Fallback models may answer when it's used up or failing.</param>
+/// <param name="LastFailure">
+/// <c>key_refused</c> when Google last refused the key in use, <c>quota_exhausted</c> when every model's quota was used up,
+/// otherwise null. Cleared by the next successful call or by saving or removing a key. Kept in memory, so a restart clears it.
+/// </param>
+public sealed record AiKeyStatusDto(bool HasUserKey, string? Hint, bool ServerKeyAvailable, string Model, string? LastFailure = null, DateTimeOffset? LastFailureAt = null);
 
 public sealed record SaveAiKeyRequest(string? ApiKey);
 
@@ -75,7 +100,8 @@ public sealed record StatementDto(
     string? Subject,
     IReadOnlyList<string> DetectionReasons,
     string? SignInUrl,
-    string? DownloadHint);
+    string? DownloadHint,
+    StatementFileFormat? Format = null);
 
 /// <summary>A bank FinSight can name, with trusted sign-in guidance from <c>KnownInstitutions</c> (never from user or email content).</summary>
 public sealed record InstitutionDto(string Id, string Name, string? SignInUrl, string? DownloadHint);
@@ -168,8 +194,19 @@ public sealed record RecurringDto(
 
 public sealed record RecurringResponse(IReadOnlyList<RecurringDto> Items, decimal MonthlyTotal, decimal MonthlySubscriptions, decimal AnnualTotal, bool AiReviewed, string Currency);
 
-public sealed record AnalysisAvailability(bool Enabled, bool Configured);
+/// <param name="Configured">A Gemini key is available (the user's own or the server's). Without one, analyses are written by FinSight.</param>
+/// <param name="Blocked">
+/// Why asking Gemini right now would not help even though a key is configured: <c>key_refused</c> (Google refused the key last
+/// time) or <c>limit_reached</c> (today's allowance is used up). Null when a try could succeed.
+/// </param>
+public sealed record AnalysisAvailability(bool Enabled, bool Configured, string? Blocked = null);
 
+/// <param name="Model">The Gemini model that wrote the analysis, which may be a fallback model. Null for built-in analyses.</param>
+/// <param name="Source"><c>ai</c> or <c>builtIn</c> (written by FinSight without AI). Null when there is no analysis.</param>
+/// <param name="FallbackReason">
+/// For built-in analyses, why AI wasn't used: <c>not_configured</c>, <c>key_refused</c>, <c>quota_exhausted</c>, <c>limit_reached</c>
+/// or <c>unavailable</c>.
+/// </param>
 public sealed record AnalysisResponse(
     PeriodDto Period,
     AnalysisState State,
@@ -178,7 +215,9 @@ public sealed record AnalysisResponse(
     string? Model,
     DateTimeOffset? GeneratedAt,
     AnalysisAvailability Availability,
-    string Currency);
+    string Currency,
+    AnalysisSource? Source = null,
+    string? FallbackReason = null);
 
 public sealed record ProcessStatementsRequest(IReadOnlyList<Guid> StatementIds);
 
@@ -188,8 +227,8 @@ public static class Mapping
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    public static SettingsDto ToDto(this UserSettings s) =>
-        new(s.Currency, s.DateFormat, s.Theme, s.AiCategorizationEnabled, s.AiInsightsEnabled, s.NotificationsEnabled);
+    public static SettingsDto ToDto(this UserSettings s, bool emailConfigured) =>
+        new(s.Currency, s.DateFormat, s.Theme, s.AiCategorizationEnabled, s.AiInsightsEnabled, s.AutoScanEnabled, s.AutoImportEnabled, s.MonthlyDigestEnabled, emailConfigured);
 
     public static StatementDto ToDto(this Statement s)
     {
@@ -219,7 +258,8 @@ public static class Mapping
             Subject: MaskedSubject(s.Subject),
             DetectionReasons: ReadList(s.DetectionReasons),
             SignInUrl: institution?.SignInUrl,
-            DownloadHint: institution?.DownloadHint);
+            DownloadHint: institution?.DownloadHint,
+            Format: s.Format);
     }
 
     public static InstitutionDto ToDto(this Institution i) => new(i.Id, i.Name, i.SignInUrl, i.DownloadHint);

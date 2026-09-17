@@ -8,13 +8,13 @@ import { keys } from '@/api/queries';
 import type { Statement } from '@/api/schemas';
 import { useConfirm } from '@/app/providers/ConfirmProvider';
 import { useJobs, type UploadItem } from '@/app/providers/JobsProvider';
-import { DropHighlight, UploadProgressList, usePdfPicker, type UploadRowData } from '@/components/UploadProgressList';
+import { DropHighlight, UploadProgressList, useStatementFilePicker, type UploadRowData } from '@/components/UploadProgressList';
 import { Collapse } from '@/components/ui/AutoHeight';
 import { Button, buttonStyles } from '@/components/ui/Button';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useSingleFlight } from '@/hooks/useSingleFlight';
 import { cn } from '@/lib/cn';
-import { alertCountLabel, alertGuidance, alertMonths, alertReadyLabel, groupAlerts, type AlertGroup } from '@/lib/statements';
+import { alertCountLabel, alertGuidance, alertMonths, alertReadyLabel, groupAlerts, needsPassword, type AlertGroup } from '@/lib/statements';
 
 /** How long finished uploads stay listed (with their checks) before the list, or an emptied card, folds away. */
 export const UPLOAD_LINGER_MS = 1800;
@@ -23,9 +23,30 @@ export const alertScope = (groupKey: string) => `alert:${groupKey}`;
 
 const HEIGHT_SPRING = { type: 'spring', stiffness: 440, damping: 42 } as const;
 
-/** Rows for a list of tracked uploads, each failed one removable. */
-export function uploadRows(items: UploadItem[], onRemove: (id: string) => void, detail?: (item: UploadItem) => string | null): UploadRowData[] {
-  return items.map((item) => ({ key: item.id, name: item.name, state: item.state, message: item.message, detail: detail?.(item) ?? null, onRemove: () => onRemove(item.id) }));
+/** Rows for a list of tracked uploads, each failed one removable, and a locked PDF unlockable with its password. */
+export function uploadRows(
+  items: UploadItem[],
+  onRemove: (id: string) => void,
+  detail?: (item: UploadItem) => string | null,
+  onUnlock?: (id: string, password: string) => Promise<unknown>,
+): UploadRowData[] {
+  return items.map((item) => ({
+    key: item.id,
+    name: item.name,
+    state: item.state,
+    message: item.message,
+    detail: detail?.(item) ?? null,
+    onRemove: () => onRemove(item.id),
+    unlock:
+      item.canUnlock && onUnlock
+        ? {
+            incorrect: item.failureCode === 'pdf_password_incorrect',
+            // A failure other than the password itself (the connection dropped while unlocking) is said in the prompt.
+            error: needsPassword(item.failureCode) ? null : item.message,
+            onUnlock: (password: string) => onUnlock(item.id, password),
+          }
+        : undefined,
+  }));
 }
 
 /**
@@ -91,12 +112,12 @@ function ReadyLine({ group, dateFormat }: { group: AlertGroup; dateFormat: strin
 interface CardProps {
   group: AlertGroup;
   dateFormat: string;
-  /** Called with each statement the server accepts a PDF for. */
+  /** Called with each statement the server accepts a file for. */
   onUploadAccepted?: (statementId: string) => void;
 }
 
 /**
- * One account's statement alerts: what's ready, how to get it from the bank, and a place to upload the PDFs
+ * One account's statement alerts: what's ready, how to get it from the bank, and a place to upload the statements
  * (a button or a drop). Upload progress shows inline; each uploaded month leaves the list, and the card folds away
  * once nothing is left to do.
  */
@@ -118,7 +139,7 @@ export function StatementAlertCard({ group, dateFormat, onUploadAccepted }: Card
     void jobs.uploadFiles(files, { scope, statementId: only?.id, onAccepted: onUploadAccepted });
   }
 
-  const picker = usePdfPicker(upload);
+  const picker = useStatementFilePicker(upload);
   const drop = useFileDrop(upload, count === 0);
 
   const dismiss = useMutation({
@@ -174,7 +195,7 @@ export function StatementAlertCard({ group, dateFormat, onUploadAccepted }: Card
                 </a>
               )}
               <Button variant="tinted" size="sm" icon={<FileUp size={14} aria-hidden="true" />} disabled={count === 0} onClick={picker.open}>
-                {count === 1 ? 'Upload PDF' : 'Upload PDFs'}
+                {count === 1 ? 'Upload statement' : 'Upload statements'}
               </Button>
               <Button
                 variant="plain"
@@ -196,7 +217,7 @@ export function StatementAlertCard({ group, dateFormat, onUploadAccepted }: Card
           )}
 
           <Collapse open={items.length > 0}>
-            <UploadProgressList className="mt-3.5" label={`Uploads for ${group.title}`} rows={uploadRows(items, (id) => jobs.clearUploads(scope, id))} />
+            <UploadProgressList className="mt-3.5" label={`Uploads for ${group.title}`} rows={uploadRows(items, (id) => jobs.clearUploads(scope, id), undefined, jobs.unlockUpload)} />
           </Collapse>
         </div>
       </div>

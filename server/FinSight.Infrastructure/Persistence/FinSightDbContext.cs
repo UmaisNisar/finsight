@@ -43,10 +43,14 @@ public sealed class FinSightDbContext(
 
         modelBuilder.Entity<User>(e =>
         {
-            e.HasIndex(u => u.GoogleSubject).IsUnique().HasFilter("GoogleSubject IS NOT NULL");
+            // PostgreSQL folds unquoted identifiers to lower case, so the column name must be quoted there.
+            e.HasIndex(u => u.GoogleSubject).IsUnique().HasFilter(Database.IsNpgsql() ? "\"GoogleSubject\" IS NOT NULL" : "GoogleSubject IS NOT NULL");
             e.Property(u => u.Email).HasMaxLength(320);
             e.Property(u => u.DisplayName).HasMaxLength(200);
             e.Property(u => u.GeminiApiKeyHint).HasMaxLength(4);
+            e.Property(u => u.LastDigestSentFor).HasMaxLength(7);
+            e.Property(u => u.DigestFailedFor).HasMaxLength(7);
+            e.HasIndex(u => u.NextAutoScanAt);
             e.ComplexProperty(u => u.Settings, s =>
             {
                 s.Property(p => p.Currency).HasMaxLength(3);

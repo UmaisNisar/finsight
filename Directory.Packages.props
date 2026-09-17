@@ -15,6 +15,10 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
+    <!-- PostgreSQL for container deployments (Database:Provider=Postgres); migrations live in FinSight.Migrations.Postgres -->
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- Email (SMTP) -->
+    <PackageVersion Include="MailKit" Version="4.17.0" />
     <!-- PDF text + layout extraction -->
     <PackageVersion Include="PdfPig" Version="0.1.16" />
     <!-- Testing -->

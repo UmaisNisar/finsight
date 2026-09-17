@@ -28,6 +28,26 @@ public sealed class User
     public string? GeminiApiKeyHint { get; set; }
 
     public UserSettings Settings { get; set; } = new();
+
+    // Automation state, written by the scheduler with compare-and-set updates so that two server instances never scan
+    // or email the same user at the same time.
+
+    /// <summary>When the next automatic Gmail scan is due. Null until the scheduler assigns the user's daily slot.</summary>
+    public DateTimeOffset? NextAutoScanAt { get; set; }
+
+    /// <summary>When automatic import was turned on. Only statements discovered after this are imported automatically.</summary>
+    public DateTimeOffset? AutoImportEnabledAt { get; set; }
+
+    /// <summary>The month ("yyyy-MM") of the last monthly summary email, so a month is never emailed twice.</summary>
+    public string? LastDigestSentFor { get; set; }
+
+    /// <summary>The earliest time the monthly summary may be tried again. Also a short lease while one is being sent.</summary>
+    public DateTimeOffset? DigestNextAttemptAt { get; set; }
+
+    /// <summary>The month ("yyyy-MM") that <see cref="DigestFailures"/> counts delivery failures for.</summary>
+    public string? DigestFailedFor { get; set; }
+
+    public int DigestFailures { get; set; }
 }
 
 public sealed class UserSettings
@@ -37,7 +57,15 @@ public sealed class UserSettings
     public ThemePreference Theme { get; set; } = ThemePreference.System;
     public bool AiCategorizationEnabled { get; set; } = true;
     public bool AiInsightsEnabled { get; set; } = true;
-    public bool NotificationsEnabled { get; set; }
+
+    /// <summary>Scan Gmail for new statements once a day. Scans only discover; nothing is imported unless <see cref="AutoImportEnabled"/>.</summary>
+    public bool AutoScanEnabled { get; set; }
+
+    /// <summary>Import newly found statements for a bank and account (last four digits) the user has imported before. Needs auto scan.</summary>
+    public bool AutoImportEnabled { get; set; }
+
+    /// <summary>Email a summary of the previous month early each month.</summary>
+    public bool MonthlyDigestEnabled { get; set; }
 }
 
 /// <summary>
@@ -90,8 +118,11 @@ public sealed class Statement : IUserOwned
     public required string Filename { get; set; }
     public long? SizeBytes { get; set; }
 
-    /// <summary>SHA-256 of the PDF bytes. The PDF itself is not stored.</summary>
+    /// <summary>SHA-256 of the file's bytes. The file itself is not stored.</summary>
     public string? ContentHash { get; set; }
+
+    /// <summary>What the statement was last imported from. Null until a file has been read (and for demo data).</summary>
+    public StatementFileFormat? Format { get; set; }
 
     public DocumentKind DocumentKind { get; set; }
     public double DetectionConfidence { get; set; }
@@ -136,7 +167,7 @@ public sealed class Transaction : IUserOwned
     public Guid StatementId { get; set; }
     public Statement? Statement { get; set; }
 
-    /// <summary>Stable identity across re-imports: account + date + amount + description + occurrence.</summary>
+    /// <summary>Stable identity across re-imports: account + date + amount + description (or the bank's transaction id) + occurrence.</summary>
     public required string Fingerprint { get; set; }
 
     public DateOnly Date { get; set; }
@@ -239,4 +270,5 @@ public sealed class ProcessingJob : IUserOwned
     public DateTimeOffset? CompletedAt { get; set; }
 }
 
-public sealed record JobStep(string Key, string Label, StepStatus Status, string? Detail = null);
+/// <param name="Code">For a failed statement step, its stable failure code (see <c>StatementFailure</c>), so the UI can offer a fix.</param>
+public sealed record JobStep(string Key, string Label, StepStatus Status, string? Detail = null, string? Code = null);

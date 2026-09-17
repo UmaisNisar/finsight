@@ -22,7 +22,9 @@ public sealed class GeminiClientTests
     private static (GeminiClient Client, StubHttpHandler Http) Create(string? apiKey = "secret-key")
     {
         var http = new StubHttpHandler();
-        var client = new GeminiClient(new HttpClient(http), new FixedGeminiKeyResolver(apiKey), Options.Create(new GeminiOptions { TimeoutSeconds = 10 }), NullLogger<GeminiClient>.Instance);
+        // A single model with no retry delay; the fallback chain has its own tests (GeminiChainTests).
+        var client = new GeminiClient(new HttpClient(http), new FixedGeminiKeyResolver(apiKey),
+            Options.Create(new GeminiOptions { TimeoutSeconds = 10, FallbackModels = [], RetryDelaySeconds = 0 }), NullLogger<GeminiClient>.Instance);
         return (client, http);
     }
 
@@ -68,9 +70,9 @@ public sealed class GeminiClientTests
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.TooManyRequests, AiFailure.RateLimited)]
-    [InlineData(HttpStatusCode.InternalServerError, AiFailure.Unavailable)]
-    public async Task Reports_persistent_upstream_errors(HttpStatusCode status, AiFailure expected)
+    [InlineData(HttpStatusCode.TooManyRequests, AiFailure.RateLimited, 1)]
+    [InlineData(HttpStatusCode.InternalServerError, AiFailure.Unavailable, 2)]
+    public async Task Reports_persistent_upstream_errors(HttpStatusCode status, AiFailure expected, int requests)
     {
         var (client, http) = Create();
         http.Status(status).Status(status);
@@ -78,6 +80,7 @@ public sealed class GeminiClientTests
         var act = () => Call(client);
 
         (await act.Should().ThrowAsync<AiUnavailableException>()).Which.Failure.Should().Be(expected);
+        http.Requests.Should().HaveCount(requests, "a used-up quota is not retried; a server error is, once");
     }
 
     [Fact]
@@ -100,7 +103,7 @@ public sealed class GeminiClientTests
     public async Task Malformed_envelopes_are_reported_as_invalid_responses(string body)
     {
         var (client, http) = Create();
-        http.Json(body);
+        http.Json(body).Json(body);
 
         var act = () => Call(client);
 
@@ -111,11 +114,12 @@ public sealed class GeminiClientTests
     public async Task Output_that_is_not_the_requested_json_is_an_invalid_response()
     {
         var (client, http) = Create();
-        http.Json(Candidate("Sure! Here are your categories: coffee."));
+        http.Json(Candidate("Sure! Here are your categories: coffee.")).Json(Candidate("Still not JSON."));
 
         var act = () => Call(client);
 
         (await act.Should().ThrowAsync<AiUnavailableException>()).Which.Failure.Should().Be(AiFailure.InvalidResponse);
+        http.Requests.Should().HaveCount(2, "an unusable answer is retried once");
     }
 
     [Fact]
@@ -139,7 +143,7 @@ public sealed class GeminiClientTests
             .ToList();
         http.Json(Candidate("""{"results":[{"ref":"M1","categoryId":"food.coffee","confidence":0.9},{"ref":"M2","categoryId":"not.real","confidence":0.9}]}"""))
             .Json(Candidate("""{"results":[{"ref":"M41","categoryId":"shopping.general","confidence":0.8},{"ref":"M1","categoryId":"food.coffee","confidence":0.9}]}"""));
-        var service = new GeminiService(client, new FixedGeminiKeyResolver("k"));
+        var service = GeminiChainTests.Service(client, new FixedGeminiKeyResolver("k"));
 
         var results = await service.CategorizeTransactionsAsync(requests, CancellationToken.None);
 

@@ -1,10 +1,10 @@
 import { type QueryClient, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { errorMessage } from '@/api/client';
+import { ApiError, errorMessage } from '@/api/client';
 import { api } from '@/api/endpoints';
 import { keys, useInvalidateFinancialData } from '@/api/queries';
 import type { Job } from '@/api/schemas';
-import { isPdfFile } from '@/lib/statements';
+import { isStatementFile, needsPassword, UNSUPPORTED_FILE_MESSAGE } from '@/lib/statements';
 import { useToast } from './ToastProvider';
 
 /** One file the user added: waiting its turn, being sent, being read by the server, or finished. */
@@ -19,6 +19,10 @@ export interface UploadItem {
   message: string | null;
   statementId: string | null;
   jobId: string | null;
+  /** Why it failed, as a stable code (`pdf_password_protected`, `csv_unrecognized`), when the server gave one. */
+  failureCode: string | null;
+  /** It failed for want of a PDF password (or while being unlocked), so `unlockUpload` can send its held file again with one. */
+  canUnlock: boolean;
 }
 
 export interface UploadOptions {
@@ -27,9 +31,11 @@ export interface UploadOptions {
   statementId?: string;
   /** Called as the server accepts each file, with the statement it created or fulfilled. */
   onAccepted?: (statementId: string) => void;
+  /** Opens password-protected PDFs. Sent with the upload request only; never stored or kept with the file. */
+  password?: string;
 }
 
-export const NOT_A_PDF_MESSAGE = 'This isn’t a PDF. Download the statement as a PDF from your bank.';
+export { UNSUPPORTED_FILE_MESSAGE };
 
 interface UploadRecord {
   id: string;
@@ -37,8 +43,19 @@ interface UploadRecord {
   name: string;
   phase: 'queued' | 'uploading' | 'sent' | 'failed';
   error: string | null;
+  /** The code of an error from the upload request itself. Job failures carry theirs in the job. */
+  code: string | null;
+  /** The file has been sent again with a password, so a failure (even a network one) still offers the password field. */
+  unlockAttempted: boolean;
   statementId: string | null;
   jobId: string | null;
+}
+
+/** A file kept in memory while its upload can still be retried with a password, and the statement it was sent for. */
+interface HeldFile {
+  file: File;
+  target: string | undefined;
+  statementId: string | null;
 }
 
 interface JobsContextValue {
@@ -55,10 +72,18 @@ interface JobsContextValue {
   /** Files added during this visit, oldest first, with live progress. */
   uploads: UploadItem[];
   /**
-   * Uploads PDFs one after another (never in parallel, across every caller) and follows each file's job until the
-   * server has read it. Files that aren't PDFs are rejected on the spot. Resolves once these files have been sent.
+   * Uploads statement files one after another (never in parallel, across every caller) and follows each file's job
+   * until the server has read it. Files FinSight can't read are rejected on the spot. Resolves once these files have
+   * been sent.
    */
   uploadFiles: (files: File[], options: UploadOptions) => Promise<void>;
+  /**
+   * Sends a file that failed because it is a password-protected PDF again, with its password, in the same row. The
+   * password goes into that one request and nowhere else. Resolves once the file has been sent.
+   */
+  unlockUpload: (id: string, password: string) => Promise<void>;
+  /** The file uploaded this visit for a statement, while it is still held (a locked PDF waiting for its password). */
+  heldFileFor: (statementId: string) => File | null;
   /** Removes finished files from a scope's list: one file, or all of them. Files still in flight stay. */
   clearUploads: (scope: string, id?: string) => void;
 }
@@ -73,6 +98,8 @@ const JobsContext = createContext<JobsContextValue>({
   dismiss: () => undefined,
   uploads: [],
   uploadFiles: async () => undefined,
+  unlockUpload: async () => undefined,
+  heldFileFor: () => null,
   clearUploads: () => undefined,
 });
 
@@ -88,13 +115,13 @@ const jobSettled = (job: Job | undefined) => job?.status === 'succeeded' || job?
 const UNREADABLE = 'This statement couldn’t be read.';
 
 /** Where an upload stands, from its record and, once sent, its job. A file the server couldn't read fails its step. */
-function uploadState(record: UploadRecord, job: Job | undefined, jobError: unknown): Pick<UploadItem, 'state' | 'message'> {
-  if (record.phase !== 'sent') return { state: record.phase, message: record.error };
-  if (jobError) return { state: 'failed', message: errorMessage(jobError) };
-  if (!job || !jobSettled(job)) return { state: 'processing', message: null };
-  if (job.status === 'failed') return { state: 'failed', message: job.errorMessage ?? UNREADABLE };
+function uploadState(record: UploadRecord, job: Job | undefined, jobError: unknown): Pick<UploadItem, 'state' | 'message' | 'failureCode'> {
+  if (record.phase !== 'sent') return { state: record.phase, message: record.error, failureCode: record.code };
+  if (jobError) return { state: 'failed', message: errorMessage(jobError), failureCode: null };
+  if (!job || !jobSettled(job)) return { state: 'processing', message: null, failureCode: null };
+  if (job.status === 'failed') return { state: 'failed', message: job.errorMessage ?? UNREADABLE, failureCode: job.errorCode };
   const failedStep = job.steps.find((step) => step.status === 'failed');
-  return failedStep ? { state: 'failed', message: failedStep.detail ?? UNREADABLE } : { state: 'done', message: null };
+  return failedStep ? { state: 'failed', message: failedStep.detail ?? UNREADABLE, failureCode: failedStep.code ?? null } : { state: 'done', message: null, failureCode: null };
 }
 
 function isSettledRecord(client: QueryClient, record: UploadRecord): boolean {
@@ -111,8 +138,10 @@ let uploadCounter = 0;
  * persisted progress. Resumes an in-flight job after a reload, and refreshes data when it finishes.
  * `quiet` is for screens that show progress inline (onboarding): no toasts, and finished jobs stay until dismissed.
  *
- * It also runs the upload queue: PDFs added anywhere are sent one at a time, and each file's own job is followed
- * so the screen that added it can show per-file progress.
+ * It also runs the upload queue: statement files added anywhere are sent one at a time, and each file's own job is
+ * followed so the screen that added it can show per-file progress. A password-protected PDF's file is held in memory
+ * (never stored) until it is unlocked or removed, so it can be sent again with its password; passwords themselves are
+ * only ever passed straight into the upload request.
  */
 export function JobsProvider({ children, enabled, quiet = false }: { children: ReactNode; enabled: boolean; quiet?: boolean }) {
   const [jobId, setJobId] = useState<string | null>(null);
@@ -185,13 +214,46 @@ export function JobsProvider({ children, enabled, quiet = false }: { children: R
   // --- Uploads ---------------------------------------------------------------------------------------------------
   const [records, setRecords] = useState<UploadRecord[]>([]);
   const queue = useRef<Promise<void>>(Promise.resolve());
+  const held = useRef(new Map<string, HeldFile>());
   const patchRecord = useCallback((id: string, patch: Partial<UploadRecord>) => setRecords((list) => list.map((r) => (r.id === id ? { ...r, ...patch } : r))), []);
 
+  /** Queues one file's request. The password, if any, lives only in this closure until the request is sent. */
+  const send = useCallback(
+    (id: string, file: File, statementId: string | undefined, password: string | undefined, onAccepted?: (statementId: string) => void) => {
+      queue.current = queue.current.then(async () => {
+        patchRecord(id, { phase: 'uploading' });
+        try {
+          const started = await api.uploadStatement(file, statementId, password);
+          const entry = held.current.get(id);
+          if (entry) entry.statementId = started.statementId;
+          patchRecord(id, { phase: 'sent', jobId: started.jobId, statementId: started.statementId });
+          onAccepted?.(started.statementId);
+          // The fulfilled alert, or the new statement, changes status straight away.
+          void client.invalidateQueries({ queryKey: keys.statements });
+        } catch (error) {
+          patchRecord(id, { phase: 'failed', error: errorMessage(error), code: error instanceof ApiError ? error.code : null });
+        }
+      });
+      return queue.current;
+    },
+    [client, patchRecord],
+  );
+
   const uploadFiles = useCallback(
-    (files: File[], { scope, statementId, onAccepted }: UploadOptions) => {
+    (files: File[], { scope, statementId, onAccepted, password }: UploadOptions) => {
       const added = files.map((file) => {
-        const pdf = isPdfFile(file);
-        const record: UploadRecord = { id: `upload-${++uploadCounter}`, scope, name: file.name, phase: pdf ? 'queued' : 'failed', error: pdf ? null : NOT_A_PDF_MESSAGE, statementId: null, jobId: null };
+        const readable = isStatementFile(file);
+        const record: UploadRecord = {
+          id: `upload-${++uploadCounter}`,
+          scope,
+          name: file.name,
+          phase: readable ? 'queued' : 'failed',
+          error: readable ? null : UNSUPPORTED_FILE_MESSAGE,
+          code: readable ? null : 'unsupported_file',
+          unlockAttempted: false,
+          statementId: null,
+          jobId: null,
+        };
         return { file, record };
       });
       // A new batch replaces the scope's finished files, so its list shows what is happening now.
@@ -199,23 +261,31 @@ export function JobsProvider({ children, enabled, quiet = false }: { children: R
 
       for (const { file, record } of added) {
         if (record.phase !== 'queued') continue;
-        queue.current = queue.current.then(async () => {
-          patchRecord(record.id, { phase: 'uploading' });
-          try {
-            const started = await api.uploadStatement(file, statementId);
-            patchRecord(record.id, { phase: 'sent', jobId: started.jobId, statementId: started.statementId });
-            onAccepted?.(started.statementId);
-            // The fulfilled alert, or the new statement, changes status straight away.
-            void client.invalidateQueries({ queryKey: keys.statements });
-          } catch (error) {
-            patchRecord(record.id, { phase: 'failed', error: errorMessage(error) });
-          }
-        });
+        held.current.set(record.id, { file, target: statementId, statementId: statementId ?? null });
+        send(record.id, file, statementId, password, onAccepted);
       }
       return queue.current;
     },
-    [client, patchRecord],
+    [client, send],
   );
+
+  const unlockUpload = useCallback(
+    (id: string, password: string) => {
+      const entry = held.current.get(id);
+      if (!entry) return Promise.resolve();
+      patchRecord(id, { phase: 'queued', error: null, code: null, jobId: null, unlockAttempted: true });
+      // The same statement again: the one the server created or matched for this file.
+      return send(id, entry.file, entry.statementId ?? entry.target, password);
+    },
+    [patchRecord, send],
+  );
+
+  const heldFileFor = useCallback((statementId: string) => {
+    for (const entry of held.current.values()) {
+      if (entry.statementId === statementId) return entry.file;
+    }
+    return null;
+  }, []);
 
   const clearUploads = useCallback(
     (scope: string, id?: string) => setRecords((list) => list.filter((r) => r.scope !== scope || (id !== undefined && r.id !== id) || !isSettledRecord(client, r))),
@@ -233,11 +303,22 @@ export function JobsProvider({ children, enabled, quiet = false }: { children: R
 
   const derived = records.map((record): UploadItem => {
     const result = record.jobId ? uploadJobs[uploadJobIds.indexOf(record.jobId)] : undefined;
-    return { id: record.id, scope: record.scope, name: record.name, statementId: record.statementId, jobId: record.jobId, ...uploadState(record, result?.data, result?.error) };
+    const state = uploadState(record, result?.data, result?.error);
+    // Files are held for as long as their rows are listed (until read or removed), so a locked one can always be sent again.
+    const canUnlock = state.state === 'failed' && (needsPassword(state.failureCode) || record.unlockAttempted);
+    return { id: record.id, scope: record.scope, name: record.name, statementId: record.statementId, jobId: record.jobId, ...state, canUnlock };
   });
   // Query results are new objects on every render; keep the list stable while nothing in it has changed.
   const derivedJson = JSON.stringify(derived);
   const uploads = useMemo(() => JSON.parse(derivedJson) as UploadItem[], [derivedJson]);
+
+  // A file is held only while its row may still need it: once it has been read, or its row is gone, let it go.
+  useEffect(() => {
+    for (const id of held.current.keys()) {
+      const item = uploads.find((upload) => upload.id === id);
+      if (!item || item.state === 'done') held.current.delete(id);
+    }
+  }, [uploads]);
 
   // As each file's job settles, refresh what it changed: the statement, and the figures built from it.
   const refreshedUploads = useRef(new Set<string>());
@@ -252,8 +333,8 @@ export function JobsProvider({ children, enabled, quiet = false }: { children: R
   const isRefreshing = job !== null && !isActive && refreshedId !== job.id;
   const isLoading = enabled && jobId !== null && query.isPending && !query.isError;
   const value = useMemo<JobsContextValue>(
-    () => ({ job: job && job.id !== dismissedId ? job : null, isActive, isRefreshing, isLoading, ready, track, dismiss, uploads, uploadFiles, clearUploads }),
-    [job, dismissedId, isActive, isRefreshing, isLoading, ready, track, dismiss, uploads, uploadFiles, clearUploads],
+    () => ({ job: job && job.id !== dismissedId ? job : null, isActive, isRefreshing, isLoading, ready, track, dismiss, uploads, uploadFiles, unlockUpload, heldFileFor, clearUploads }),
+    [job, dismissedId, isActive, isRefreshing, isLoading, ready, track, dismiss, uploads, uploadFiles, unlockUpload, heldFileFor, clearUploads],
   );
 
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>;

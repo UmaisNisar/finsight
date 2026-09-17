@@ -37,6 +37,13 @@ public static class MerchantCatalog
         new(@"\bGOOGLE \*?(STORAGE|ONE|GSUITE|WORKSPACE)", "Google One", CategoryTaxonomy.Subscriptions, 0.95),
         new(@"\bMICROSOFT ?\*?(365|OFFICE)", "Microsoft 365", CategoryTaxonomy.Subscriptions, 0.95),
         new(@"\bPATREON\b", "Patreon", CategoryTaxonomy.Subscriptions, 0.95),
+        new(@"\bGITHUB\b", "GitHub", CategoryTaxonomy.Subscriptions, 0.93),
+        new(@"\bNOTION\b", "Notion", CategoryTaxonomy.Subscriptions, 0.9),
+        new(@"\bCANVA\b", "Canva", CategoryTaxonomy.Subscriptions, 0.93),
+        new(@"\bFIGMA\b", "Figma", CategoryTaxonomy.Subscriptions, 0.95),
+        new(@"\bZOOM\.US|\bZOOM VIDEO", "Zoom", CategoryTaxonomy.Subscriptions, 0.93),
+        new(@"\b1PASSWORD|\bLASTPASS|\bBITWARDEN|\bNORDVPN|\bEXPRESSVPN|\bPROTON ?(MAIL|AG|VPN)", null, CategoryTaxonomy.Subscriptions, 0.93),
+        new(@"\bSIRIUS ?XM|\bCRUNCHYROLL|\bDAZN\b|\bBRITBOX|\bMUBI\b|\bKINDLE UNLIMITED|\bSCRIBD", null, CategoryTaxonomy.Subscriptions, 0.93),
 
         // Food delivery (before ride sharing so "UBER EATS" wins over "UBER")
         new(@"\bUBER ?\*? ?EATS|UBEREATS", "Uber Eats", "food.delivery", 0.98),
@@ -196,5 +203,13 @@ public static class MerchantCatalog
         new(@"\bGYM\b|\bFITNESS|\bYOGA|\bPILATES|\bCROSSFIT", null, "health.fitness", 0.75),
         new(@"\bCINEMA|\bTHEATRE|\bTHEATER", null, "entertainment.movies", 0.65),
         new(@"\bSUBSCRIPTION|\bMEMBERSHIP", null, CategoryTaxonomy.Subscriptions, 0.6),
+        new(@"\bSTREAMING\b", null, CategoryTaxonomy.Subscriptions, 0.65),
+        new(@"\bTAXI\b|\bTAXICAB", null, "transportation.ride-sharing", 0.75),
+        new(@"\bHAIR ?(SALON|CUT|STUDIO)|\bSALON\b|\bNAIL (BAR|SALON|SPA)|\bDAY ?SPA|\bLAUNDROMAT|\bDRY ?CLEAN", null, "personal.care", 0.7),
+        new(@"\bBOOKSTORE|\bBOOKSHOP|\bINDIGO BOOKS|\bCHAPTERS\b|\bPETSMART|\bPET ?VALU|\bPETCO\b|\bCANADA POST|\bUSPS\b|\bFEDEX|\bPUROLATOR", null, "shopping.general", 0.7),
+        new(@"\bHARDWARE\b|\bGARDEN CENT", null, "housing.home", 0.7),
+        new(@"\bELECTRICITY|\bNATURAL GAS|\bWATER (AND|&) SEWER", null, "housing.utilities", 0.7),
+        new(@"\bWIRELESS\b|\bINTERNET (SERVICE|BILL)", null, "housing.phone-internet", 0.7),
+        new(@"\bTOLL ROAD|\bCAR RENTAL|\bRENT ?A ?CAR", null, "travel.other", 0.7),
     ];
 }

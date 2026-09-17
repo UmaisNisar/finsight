@@ -62,6 +62,9 @@ public sealed partial class JobWorker(JobQueue queue, IServiceScopeFactory scope
             {
                 userLock.Release();
                 queue.ReleaseUploadBytes(JobQueue.UploadBytesOf(item));
+
+                // Uploaded bytes and any PDF password never outlive the job.
+                item.ClearUploads();
             }
         }
     }

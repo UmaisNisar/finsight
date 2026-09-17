@@ -4,7 +4,7 @@ import { useId, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { errorMessage } from '@/api/client';
 import { api } from '@/api/endpoints';
-import { keys, markSignedOut, useAiKey, useDeleteAiKey, useGmail, useInvalidateFinancialData, useSession, useSettings, useSignOut, useUpdateSettings } from '@/api/queries';
+import { keys, markSignedOut, useAiKey, useDeleteAiKey, useGmail, useInvalidateFinancialData, useSendTestDigest, useSession, useSettings, useSignOut, useUpdateSettings } from '@/api/queries';
 import type { AiKey, Settings } from '@/api/schemas';
 import { useConfirm } from '@/app/providers/ConfirmProvider';
 import { useToast } from '@/app/providers/ToastProvider';
@@ -96,6 +96,7 @@ const PopUpSkeleton = () => <Skeleton className="h-8 w-28 rounded-full" />;
 type DeleteAction = 'transactions' | 'statements' | 'all' | 'account';
 
 export function aiKeyStatus(key: AiKey): string {
+  if (key.lastFailure === 'key_refused') return key.hasUserKey ? `Google refused your key ${key.hint ?? ''}`.trim() : 'Google refused the server’s Gemini key';
   if (key.hasUserKey) return `Your key ${key.hint ?? ''}`.trim();
   if (key.serverKeyAvailable) return 'Using FinSight’s built-in AI';
   return 'Not set up — AI categorization and insights are off';
@@ -203,6 +204,104 @@ function GeminiKeyRow() {
           }}
         />
       </Sheet>
+    </div>
+  );
+}
+
+/** A caption-sized placeholder, so a row keeps its two-line height while its detail loads. */
+const DetailSkeleton = () => (
+  <span className="flex h-[18px] items-center">
+    <Skeleton className="h-3 w-44 max-w-full" />
+  </span>
+);
+
+/**
+ * Automatic Gmail scans, automatic import for known accounts, and the monthly summary email. Rows that depend on
+ * another setting expand and collapse in place; while settings load, rows keep their final height with placeholder
+ * controls.
+ */
+function AutomationGroup({ email, showScan, gmailExpired }: { email: string; showScan: boolean; gmailExpired: boolean }) {
+  const settings = useSettings();
+  const update = useUpdateSettings();
+  const sendTest = useSendTestDigest();
+  const toast = useToast();
+  const s = settings.data;
+
+  function change(patch: Partial<Settings>) {
+    sendTest.reset();
+    if (s) update.mutate({ ...s, ...patch });
+  }
+
+  function testEmail() {
+    update.reset();
+    sendTest.mutate(undefined, { onSuccess: () => toast('Test email sent', 'success') });
+  }
+
+  const error = update.isError ? errorMessage(update.error) : sendTest.isError ? errorMessage(sendTest.error) : null;
+
+  return (
+    <div>
+      <Group title="Automation" footer="Summary emails contain amounts only, never account numbers or transaction descriptions.">
+        <Collapse open={showScan}>
+          <Row
+            label="Scan Gmail automatically"
+            detail={gmailExpired ? 'Paused until you reconnect Gmail' : 'Checks daily for new statements. Nothing is imported without you.'}
+            control={
+              s ? (
+                <Switch
+                  label="Scan Gmail automatically"
+                  checked={s.autoScanEnabled}
+                  disabled={gmailExpired && !s.autoScanEnabled}
+                  onChange={(v) => change({ autoScanEnabled: v, autoImportEnabled: v && s.autoImportEnabled })}
+                />
+              ) : (
+                <SwitchSkeleton />
+              )
+            }
+          />
+        </Collapse>
+        <Collapse open={showScan && !!s?.autoScanEnabled}>
+          <Row
+            label="Import from banks you’ve used before"
+            detail="Only for accounts you’ve already imported"
+            control={
+              s ? <Switch label="Import from banks you’ve used before" checked={s.autoImportEnabled} onChange={(v) => change({ autoImportEnabled: v })} /> : <SwitchSkeleton />
+            }
+          />
+        </Collapse>
+        <div className={ROW}>
+          <RowText
+            label="Monthly summary email"
+            detail={
+              !s ? (
+                <DetailSkeleton />
+              ) : s.emailConfigured ? (
+                <span className="fade-in block truncate">To {email}</span>
+              ) : (
+                <span className="fade-in block">Email isn’t set up on this server, so summaries can’t be sent.</span>
+              )
+            }
+          />
+          <div className="flex shrink-0 items-center gap-1.5">
+            {s?.emailConfigured && (
+              <Button variant="plain" size="sm" className="fade-in" loading={sendTest.isPending} onClick={testEmail}>
+                Send a test
+              </Button>
+            )}
+            {s ? (
+              <Switch
+                label="Monthly summary email"
+                checked={s.monthlyDigestEnabled}
+                disabled={!s.emailConfigured && !s.monthlyDigestEnabled}
+                onChange={(v) => change({ monthlyDigestEnabled: v })}
+              />
+            ) : (
+              <SwitchSkeleton />
+            )}
+          </div>
+        </div>
+      </Group>
+      <InlineError message={error} />
     </div>
   );
 }
@@ -415,14 +514,18 @@ export default function SettingsPage() {
             )
           }
         />
-        <Row
-          label="Email notifications"
-          detail="New statements · coming soon"
-          control={s ? <Switch label="Email notifications" checked={s.notificationsEnabled} onChange={(v) => change({ notificationsEnabled: v })} /> : <SwitchSkeleton />}
-        />
       </Group>
       <InlineError message={update.isError ? errorMessage(update.error) : null} />
     </div>
+  );
+
+  // Demo accounts have sample data only: no Gmail to scan and nobody to email.
+  const automationGroup = user && !isDemo && (
+    <AutomationGroup
+      email={user.email}
+      showScan={showGmail && (gmail.isPending || !!connection?.connected)}
+      gmailExpired={connection?.status === 'expired'}
+    />
   );
 
   const dataGroups = (
@@ -463,7 +566,7 @@ export default function SettingsPage() {
     </div>
   );
 
-  // Two balanced columns on wide screens. With Gmail or a key row, AI sits under the account; for the demo
+  // Two balanced columns on wide screens. With Gmail or a key row, Automation and AI sit under the account; for the demo
   // (no Gmail, no key) Preferences does instead, so neither column runs much longer than the other.
   const aiLeft = showGmail || showKey;
 
@@ -482,6 +585,7 @@ export default function SettingsPage() {
         <div className="space-y-5">
           {account}
           {gmailGroup}
+          {!settings.isError && automationGroup}
           {!settings.isError && (aiLeft ? aiGroup : preferencesGroup)}
         </div>
         {!settings.isError && (

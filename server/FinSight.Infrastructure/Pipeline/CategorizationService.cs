@@ -12,6 +12,9 @@ namespace FinSight.Infrastructure.Pipeline;
 
 public sealed record AiCategorizationOutcome(int MerchantsSent, int MerchantsCategorized, AiFailure? Failure);
 
+/// <param name="Declined">Merchants sent to Gemini that it answered without a confident category. Empty when the call failed.</param>
+public sealed record PendingCategorizationResult(AiCategorizationOutcome Outcome, IReadOnlyList<string> Declined);
+
 /// <summary>
 /// Rule-based categorization for every transaction, AI categorization only for what rules could not
 /// decide, and transfer matching across the user's accounts.
@@ -45,21 +48,46 @@ public sealed partial class CategorizationService(
             return new AiCategorizationOutcome(0, 0, AiFailure.NotConfigured);
         }
 
-        var pending = await db.Transactions
-            .Where(t => statementIds.Contains(t.StatementId) && t.UserCategoryId == null && !t.IsReversal
-                && (t.CategorySource == CategorySource.Default || t.CategoryConfidence < CategorizationResult.AiThreshold))
-            .ToListAsync(cancellationToken);
+        return (await CategorizePendingAsync(Pending().Where(t => statementIds.Contains(t.StatementId)), skipMerchantKeys: null, cancellationToken)).Outcome;
+    }
+
+    /// <summary>
+    /// Asks Gemini again about merchants still waiting for it across all of the user's statements: those left uncategorized
+    /// because AI was unavailable (no key, key refused, quota or limit used up) when they were imported. Pending is derived from
+    /// the transactions themselves, so nothing extra is stored. Transactions and merchant rules the user set are never touched.
+    /// </summary>
+    /// <param name="skipMerchantKeys">Merchants Gemini already looked at and couldn't place, so they aren't asked about again.</param>
+    public async Task<PendingCategorizationResult> RetryPendingWithAiAsync(IReadOnlySet<string> skipMerchantKeys, CancellationToken cancellationToken)
+    {
+        if (!await gemini.IsConfiguredAsync(cancellationToken))
+        {
+            return new PendingCategorizationResult(new AiCategorizationOutcome(0, 0, AiFailure.NotConfigured), []);
+        }
+
+        return await CategorizePendingAsync(Pending(), skipMerchantKeys, cancellationToken);
+    }
+
+    /// <summary>Transactions rules couldn't place confidently, that no AI answer or user edit has settled.</summary>
+    private IQueryable<Transaction> Pending() =>
+        db.Transactions.Where(t => t.UserCategoryId == null && t.UserType == null && !t.IsReversal && t.TransferPairId == null
+            && t.CategorySource != CategorySource.User && t.CategorySource != CategorySource.Ai
+            && (t.CategorySource == CategorySource.Default || t.CategoryConfidence < CategorizationResult.AiThreshold));
+
+    private async Task<PendingCategorizationResult> CategorizePendingAsync(IQueryable<Transaction> query, IReadOnlySet<string>? skipMerchantKeys, CancellationToken cancellationToken)
+    {
+        var pending = await query.ToListAsync(cancellationToken);
 
         var groups = pending
             .GroupBy(t => (t.MerchantKey, Direction: t.Amount > 0 ? MerchantDirection.In : MerchantDirection.Out))
-            .Where(g => g.Key.MerchantKey != "unknown")
+            .Where(g => g.Key.MerchantKey != "unknown" && skipMerchantKeys?.Contains(g.Key.MerchantKey) != true)
             .OrderByDescending(g => g.Sum(t => Math.Abs(t.Amount)))
+            .ThenBy(g => g.Key.MerchantKey, StringComparer.Ordinal)
             .Take(MaxAiMerchantsPerRun)
             .ToList();
 
         if (groups.Count == 0)
         {
-            return new AiCategorizationOutcome(0, 0, null);
+            return new PendingCategorizationResult(new AiCategorizationOutcome(0, 0, null), []);
         }
 
         var requests = groups.Select((g, i) => new MerchantCategorizationRequest(
@@ -79,7 +107,7 @@ public sealed partial class CategorizationService(
         catch (AiUnavailableException ex)
         {
             LogAiUnavailable(logger, ex.Failure);
-            return new AiCategorizationOutcome(requests.Count, 0, ex.Failure);
+            return new PendingCategorizationResult(new AiCategorizationOutcome(requests.Count, 0, ex.Failure), []);
         }
 
         var existingRules = await db.MerchantRules.ToDictionaryAsync(r => r.MerchantKey, cancellationToken);
@@ -129,7 +157,10 @@ public sealed partial class CategorizationService(
         }
 
         await db.SaveChangesAsync(cancellationToken);
-        return new AiCategorizationOutcome(requests.Count, results.Count, null);
+
+        var answered = results.Select(r => r.MerchantKey).ToHashSet(StringComparer.Ordinal);
+        var declined = requests.Select(r => r.MerchantKey).Where(k => !answered.Contains(k)).Distinct().ToList();
+        return new PendingCategorizationResult(new AiCategorizationOutcome(requests.Count, results.Count, null), declined);
     }
 
     /// <summary>Pairs money moving between the user's own accounts within the window and marks both sides as transfers.</summary>

@@ -1,0 +1,166 @@
+name: Release
+
+# Publishes the container image to GitHub Container Registry once CI has passed:
+#   push to main -> ghcr.io/umaisnisar/finsight:main, :latest and :sha-<short>
+#   tag v1.2.3   -> ghcr.io/umaisnisar/finsight:1.2.3, :1.2 and :sha-<short>
+# CI runs on pushes to main and on v* tags; this workflow starts when that run completes and builds the exact commit it tested.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main, "v*"]
+
+# One release at a time per branch or tag; a newer one waits rather than cancelling a push in progress.
+concurrency:
+  group: release-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  IMAGE: ghcr.io/umaisnisar/finsight
+
+jobs:
+  image:
+    name: Build, scan and publish image
+    # Only CI runs that passed, for pushes (not pull requests, which can come from forks) to this repository.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+      security-events: write # upload the Trivy SARIF report to code scanning
+    env:
+      IS_MAIN: ${{ github.event.workflow_run.head_branch == 'main' }}
+      IS_TAG: ${{ github.event.workflow_run.head_branch != 'main' && startsWith(github.event.workflow_run.head_branch, 'v') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+        with:
+          # Read the commit from the checkout: for workflow_run events github.sha is the default branch's latest commit.
+          context: git
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=main,enable=${{ env.IS_MAIN }}
+            type=raw,value=latest,enable=${{ env.IS_MAIN }}
+            type=semver,pattern={{version}},value=${{ github.event.workflow_run.head_branch }},enable=${{ env.IS_TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.workflow_run.head_branch }},enable=${{ env.IS_TAG }}
+          labels: |
+            org.opencontainers.image.title=FinSight
+            org.opencontainers.image.description=AI personal finance analyzer: bank statements in, explained spending out.
+
+      # Scan before publishing: build the amd64 image into the local Docker engine first. Layers are shared with the
+      # multi-arch build below through the GitHub Actions cache.
+      - name: Build image for scanning
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: finsight:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan image (report)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: finsight:scan
+          format: sarif
+          output: trivy-results.sarif
+          severity: MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Upload scan results to code scanning
+        if: always() && hashFiles('trivy-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: trivy-results.sarif
+          category: container-image
+          sha: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.IS_TAG == 'true' && format('refs/tags/{0}', github.event.workflow_run.head_branch) || 'refs/heads/main' }}
+
+      - name: Fail on critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: finsight:scan
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (linux/amd64, linux/arm64)
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          # The Dockerfile cross-publishes .NET for the target architecture on the runner's own, so arm64 needs no emulation.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          # SBOM and SLSA provenance attestations, stored alongside the image in the registry.
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "### Published ${IMAGE}"
+            echo
+            echo "Digest: \`${DIGEST}\`"
+            echo
+            echo '```'
+            echo "${TAGS}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Deployment goes here once a host is chosen. It should need `image`, run only for main or tags, deploy the immutable
+  # digest (needs.image.outputs.digest) rather than a moving tag, and use a GitHub environment with required reviewers
+  # for its secrets. For example:
+  #
+  # deploy:
+  #   needs: image
+  #   runs-on: ubuntu-latest
+  #   environment: production
+  #   permissions:
+  #     contents: read
+  #     id-token: write            # OIDC federation instead of long-lived cloud credentials
+  #   steps:
+  #     # Fly.io:  flyctl deploy --image ghcr.io/umaisnisar/finsight@<digest>   (release_command runs migrations)
+  #     # Azure:   azure/login (OIDC), then az containerapp update --image ghcr.io/umaisnisar/finsight@<digest>
+  #     # Render:  POST to the service's deploy hook with imgURL=ghcr.io/umaisnisar/finsight@<digest>
