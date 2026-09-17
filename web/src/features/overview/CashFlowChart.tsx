@@ -1,5 +1,8 @@
+import { useReducedMotion } from 'motion/react';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipContentProps } from 'recharts';
 import type { Summary } from '@/api/schemas';
+import { WidgetBoundary } from '@/components/errors/WidgetBoundary';
+import { Skeleton } from '@/components/ui/primitives';
 import { useChartColors } from '@/hooks/useChartColors';
 import { formatMoney, formatMoneyCompact, formatMonth, formatMonthYear } from '@/lib/format';
 
@@ -17,7 +20,7 @@ function ChartTooltip({ active, payload, currency }: Partial<TooltipContentProps
   const net = point.income - point.spending;
 
   return (
-    <div className="glass min-w-44 rounded-xl px-3.5 py-2.5 text-[0.8125rem] shadow-float">
+    <div className="glass min-w-44 rounded-2xl px-3.5 py-2.5 text-[0.8125rem]">
       <p className="mb-1.5 font-semibold">{formatMonthYear(point.month)}</p>
       {point.hasData ? (
         <dl className="tabular space-y-1">
@@ -47,10 +50,34 @@ function ChartTooltip({ active, payload, currency }: Partial<TooltipContentProps
   );
 }
 
-/** Income vs spending per month. Answers: "Am I consistently spending less than I earn?" */
-export function CashFlowChart({ monthly, currency }: { monthly: Summary['monthly']; currency: string }) {
+/** Placeholder bars inside the real plot area, so the chart appears in place when its data arrives. */
+function ChartSkeleton() {
+  const heights = [55, 70, 45, 80, 60, 72];
+  return (
+    <div className="flex h-full items-end gap-[8%] pr-2 pb-7 pl-14" aria-hidden="true">
+      {heights.map((h, i) => (
+        <Skeleton key={i} className="flex-1 rounded-b-none" style={{ height: `${h}%` }} />
+      ))}
+    </div>
+  );
+}
+
+type CashFlowChartProps = { monthly?: Summary['monthly']; currency: string };
+
+/** Income vs spending per month. Answers: "Am I consistently spending less than I earn?" Pass no data while loading. */
+export function CashFlowChart(props: CashFlowChartProps) {
+  // If the chart fails to render, the card keeps its height and offers Try again; new data also clears the error.
+  return (
+    <WidgetBoundary name="cash-flow" message="The cash flow chart couldn’t be shown." minHeight={288} queryKeys={[['summary']]} resetKeys={[props.monthly]}>
+      <CashFlowChartContent {...props} />
+    </WidgetBoundary>
+  );
+}
+
+function CashFlowChartContent({ monthly, currency }: CashFlowChartProps) {
   const colors = useChartColors();
-  const data: Point[] = monthly.map((m) => ({
+  const reduceMotion = useReducedMotion() ?? false;
+  const data: Point[] = (monthly ?? []).map((m) => ({
     month: m.month,
     label: formatMonth(m.month),
     income: m.income,
@@ -77,7 +104,12 @@ export function CashFlowChart({ monthly, currency }: { monthly: Summary['monthly
           Spent
         </span>
       </div>
-      <div className="h-64" role="img" aria-label={description}>
+      {!monthly ? (
+        <div className="h-64">
+          <ChartSkeleton />
+        </div>
+      ) : (
+      <div className="fade-in h-64" role="img" aria-label={description}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} barGap={2} barCategoryGap="28%" margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
             <CartesianGrid vertical={false} stroke={colors['--chart-grid']} />
@@ -91,11 +123,12 @@ export function CashFlowChart({ monthly, currency }: { monthly: Summary['monthly
               tickFormatter={(v: number) => formatMoneyCompact(v, currency)}
             />
             <Tooltip cursor={{ fill: colors['--chart-grid'], opacity: 0.6, radius: 8 }} content={<ChartTooltip currency={currency} />} />
-            <Bar dataKey="income" name="Income" fill={colors['--series-3']} radius={[4, 4, 0, 0]} maxBarSize={18} />
-            <Bar dataKey="spending" name="Spent" fill={colors['--series-1']} radius={[4, 4, 0, 0]} maxBarSize={18} />
+            <Bar dataKey="income" name="Income" fill={colors['--series-3']} radius={[4, 4, 0, 0]} maxBarSize={18} isAnimationActive={!reduceMotion} animationDuration={500} />
+            <Bar dataKey="spending" name="Spent" fill={colors['--series-1']} radius={[4, 4, 0, 0]} maxBarSize={18} isAnimationActive={!reduceMotion} animationDuration={500} />
           </BarChart>
         </ResponsiveContainer>
       </div>
+      )}
       <table className="sr-only">
         <caption>Monthly income and spending</caption>
         <thead>

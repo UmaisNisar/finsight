@@ -16,10 +16,14 @@ export const PERIOD_PRESETS: { value: Exclude<PeriodPreset, 'custom'>; label: st
 
 export const DEFAULT_PERIOD: PeriodSelection = { preset: 'last-month' };
 
+/** URL parameters that describe the selected period, carried across navigation. */
+export const PERIOD_PARAMS = ['period', 'from', 'to'] as const;
+
 export function isPreset(value: string | null): value is PeriodPreset {
-  return value !== null && ['this-month', 'last-month', 'last-3-months', 'last-6-months', 'last-12-months', 'custom'].includes(value);
+  return value !== null && (value === 'custom' || PERIOD_PRESETS.some((p) => p.value === value));
 }
 
+/** The query string for a period; also its cache key, so equal selections share cached data. */
 export function periodQuery(period: PeriodSelection): string {
   const params = new URLSearchParams({ period: period.preset });
   if (period.preset === 'custom' && period.from && period.to) {
@@ -29,8 +33,12 @@ export function periodQuery(period: PeriodSelection): string {
   return params.toString();
 }
 
-export function periodKey(period: PeriodSelection): string {
-  return periodQuery(period);
+/** The button label for a selection. Custom ranges use the label the server resolved, when known. */
+export function periodLabel(period: PeriodSelection, resolvedLabel?: string): string {
+  if (period.preset === 'custom') {
+    return resolvedLabel ?? 'Custom range';
+  }
+  return PERIOD_PRESETS.find((p) => p.value === period.preset)?.label ?? 'Last month';
 }
 
 /** Six complete months ending with the month that contains `end`: the cash-flow trend window. */
@@ -38,11 +46,18 @@ export function trailingMonths(end: string, months = 6): PeriodSelection {
   const [year, month] = end.split('-').map(Number) as [number, number];
   const endDate = new Date(Date.UTC(year, month, 0));
   const startDate = new Date(Date.UTC(year, month - months, 1));
-  return { preset: 'custom', from: toIsoDate(startDate), to: toIsoDate(endDate) };
+  return { preset: 'custom', from: utcIsoDate(startDate), to: utcIsoDate(endDate) };
 }
 
-export function toIsoDate(date: Date): string {
+function utcIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+/** Local calendar date as yyyy-MM-dd (not UTC, so "today" is the user's today). */
+export function localIsoDate(date: Date): string {
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${mm}-${dd}`;
 }
 
 /** True when a period covers exactly one calendar month. */

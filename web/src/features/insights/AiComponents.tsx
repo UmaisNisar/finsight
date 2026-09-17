@@ -1,28 +1,24 @@
-import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, Info, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link } from 'react-router';
 import { errorMessage } from '@/api/client';
 import { useAnalysis, useGenerateAnalysis } from '@/api/queries';
 import type { Analysis, AnalysisResponse } from '@/api/schemas';
-import { Button } from '@/components/ui/Button';
-import { Skeleton } from '@/components/ui/primitives';
+import { AutoHeight, Collapse } from '@/components/ui/AutoHeight';
+import { WidgetBoundary } from '@/components/errors/WidgetBoundary';
+import { Button, buttonStyles } from '@/components/ui/Button';
+import { ErrorState, Skeleton } from '@/components/ui/primitives';
+import { useSingleFlight } from '@/hooks/useSingleFlight';
 import { cn } from '@/lib/cn';
 import { CategoryGlyph, groupIdOf } from '@/lib/categories';
 import { formatMoney, formatRelativeTime } from '@/lib/format';
 import type { PeriodSelection } from '@/lib/period';
 
-export function useAnalysisState(period: PeriodSelection) {
-  const analysis = useAnalysis(period);
-  const generate = useGenerateAnalysis(period);
-  return { analysis, generate };
-}
-
 function AiMark({ className }: { className?: string }) {
   return (
     <span
       aria-hidden="true"
-      className={cn('flex size-8 items-center justify-center rounded-full text-white', className)}
+      className={cn('flex size-8 shrink-0 items-center justify-center rounded-full text-white', className)}
       style={{ background: 'linear-gradient(135deg, #34c3a0, #0a84ff 55%, #8e6cf0)' }}
     >
       <Sparkles size={16} />
@@ -32,7 +28,7 @@ function AiMark({ className }: { className?: string }) {
 
 function GeneratingState() {
   return (
-    <div aria-live="polite" aria-busy="true">
+    <div aria-live="polite" aria-busy="true" className="fade-in">
       <p className="flex items-center gap-2 text-[0.9375rem] text-label-secondary">
         <span className="size-4 animate-spin rounded-full border-2 border-accent/25 border-t-accent" aria-hidden="true" />
         Analyzing your spending. This takes about 20 seconds.
@@ -46,96 +42,155 @@ function GeneratingState() {
   );
 }
 
-/** The AI summary for a period, with every state: unavailable, not yet generated, generating, stale, failed. */
-export function AiInsightCard({ period, hasData, compact = false, linkSuffix = '' }: { period: PeriodSelection; hasData: boolean; compact?: boolean; linkSuffix?: string }) {
-  const { analysis, generate } = useAnalysisState(period);
+/** Mirrors the most common first state (an explanation and the Analyze button), so loading doesn't resize the card. */
+function InsightSkeleton() {
+  return (
+    <div aria-hidden="true">
+      {/* The explanation runs one line on wide screens, two on tablets and three on phones. */}
+      <div className="text-[0.9375rem]">
+        <span className="flex h-[1.45em] items-center">
+          <Skeleton className="h-4 w-full" />
+        </span>
+        <span className="flex h-[1.45em] items-center lg:hidden">
+          <Skeleton className="h-4 w-[62%]" />
+        </span>
+        <span className="flex h-[1.45em] items-center sm:hidden">
+          <Skeleton className="h-4 w-1/3" />
+        </span>
+      </div>
+      <Skeleton className="mt-4 h-10 w-44 rounded-full" />
+    </div>
+  );
+}
+
+type AiInsightCardProps = { period: PeriodSelection; hasData: boolean; compact?: boolean; insightsLink?: string };
+
+const INSIGHT_CARD = 'card p-6 md:p-7';
+
+function InsightTitle({ id, compact }: { id?: string; compact: boolean }) {
+  return (
+    <h2 id={id} className="text-[1.0625rem] font-semibold tracking-[-0.01em]">
+      {compact ? 'Insight' : 'Financial summary'}
+    </h2>
+  );
+}
+
+/**
+ * The AI summary for a period, with every state: loading, unavailable, not yet generated, generating, stale and
+ * failed. The card shell and its header stay put through all of them; only the body changes, animating its height.
+ * If it fails to render, the same shell shows a short message with Try again, and the page around it carries on.
+ */
+export function AiInsightCard(props: AiInsightCardProps) {
+  const compact = props.compact ?? false;
+  return (
+    <WidgetBoundary
+      name="ai-insight"
+      message="This insight couldn’t be shown."
+      minHeight={96}
+      className="py-2"
+      queryKeys={[['analysis']]}
+      resetKeys={[props.period]}
+      shell={(fallback) => (
+        <section aria-label={compact ? 'Insight' : 'Financial summary'} className={INSIGHT_CARD}>
+          <div className="mb-3 flex items-center gap-3">
+            <AiMark />
+            <InsightTitle compact={compact} />
+          </div>
+          {fallback}
+        </section>
+      )}
+    >
+      <AiInsightCardContent {...props} />
+    </WidgetBoundary>
+  );
+}
+
+function AiInsightCardContent({ period, hasData, compact = false, insightsLink = '/insights' }: AiInsightCardProps) {
+  const analysis = useAnalysis(period);
+  const generate = useGenerateAnalysis(period);
+  // Analysis takes ~20s and is rate limited; a double click must never start two.
+  const once = useSingleFlight();
+  const analyze = () => void once(() => generate.mutateAsync());
+  const titleId = useId();
   const data = analysis.data;
 
-  if (analysis.isPending) {
-    return (
-      <section className="card p-6" aria-label="AI insight">
-        <Skeleton className="h-5 w-40" />
-        <Skeleton className="mt-4 h-4 w-full" />
-        <Skeleton className="mt-2 h-4 w-3/4" />
-      </section>
-    );
-  }
+  const unavailable = !data
+    ? null
+    : !data.availability.configured
+      ? 'AI analysis isn’t set up on this server. Every number here is still calculated directly from your statements.'
+      : !data.availability.enabled
+        ? 'AI insights are turned off.'
+        : null;
 
-  if (!data) return null;
-
-  const unavailable = !data.availability.configured
-    ? 'AI analysis isn’t set up on this server. Every number here is still calculated directly from your statements.'
-    : !data.availability.enabled
-      ? 'AI insights are turned off.'
-      : null;
-
-  return (
-    <section aria-labelledby="ai-insight-title" className="card relative overflow-hidden p-6 md:p-7">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -top-24 -right-24 size-64 rounded-full opacity-[0.08] blur-3xl"
-        style={{ background: 'radial-gradient(circle, #0a84ff, #8e6cf0)' }}
-      />
-      <div className="relative">
-        <div className="mb-3 flex items-center gap-3">
-          <AiMark />
-          <h2 id="ai-insight-title" className="text-[1.0625rem] font-semibold tracking-[-0.01em]">
-            {compact ? 'Insight' : 'Financial summary'}
-          </h2>
-          {data.generatedAt && !generate.isPending && (
-            <span className="caption ml-auto hidden sm:inline">Generated {formatRelativeTime(data.generatedAt)}</span>
+  function body() {
+    if (analysis.isPending) return <InsightSkeleton />;
+    if (!data) return <ErrorState className="py-2" message={errorMessage(analysis.error)} onRetry={() => void analysis.refetch()} />;
+    if (generate.isPending) return <GeneratingState />;
+    if (unavailable) {
+      return (
+        <p className="fade-in text-[0.9375rem] text-label-secondary">
+          {unavailable}{' '}
+          {!data.availability.enabled && data.availability.configured && (
+            <Link to="/settings" className="text-accent">
+              Turn on in Settings
+            </Link>
           )}
-        </div>
-
-        {generate.isPending ? (
-          <GeneratingState />
-        ) : unavailable ? (
-          <p className="text-[0.9375rem] text-label-secondary">
-            {unavailable}{' '}
-            {!data.availability.enabled && data.availability.configured && (
-              <Link to="/settings" className="text-accent">
-                Turn on in Settings
+        </p>
+      );
+    }
+    if (data.analysis) {
+      return (
+        <div className="fade-in">
+          <p className={cn('text-pretty text-label', compact ? 'text-[1.0625rem] leading-relaxed' : 'text-[1.125rem] leading-relaxed')}>{data.analysis.summary}</p>
+          {data.state === 'stale' && (
+            <p className="mt-3 flex items-center gap-2 text-[0.875rem] text-attention">
+              <Info size={15} aria-hidden="true" />
+              Your transactions changed since this was written.
+            </p>
+          )}
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            {compact && (
+              <Link to={insightsLink} className={buttonStyles({ variant: 'tinted', size: 'sm' })}>
+                See full analysis
               </Link>
             )}
-          </p>
-        ) : data.analysis ? (
-          <>
-            <p className={cn('text-pretty text-label', compact ? 'text-[1.0625rem] leading-relaxed' : 'text-[1.125rem] leading-relaxed')}>{data.analysis.summary}</p>
-            {data.state === 'stale' && (
-              <p className="mt-3 flex items-center gap-2 text-[0.875rem] text-attention">
-                <Info size={15} aria-hidden="true" />
-                Your transactions changed since this was written.
-              </p>
-            )}
-            <div className="mt-5 flex flex-wrap items-center gap-2">
-              {compact && (
-                <Link to={`/insights${linkSuffix}`} className="inline-flex h-8 items-center rounded-full bg-accent-soft px-3.5 text-[0.8125rem] font-medium text-accent">
-                  See full analysis
-                </Link>
-              )}
-              <Button variant={data.state === 'stale' ? 'secondary' : 'plain'} size="sm" icon={<RefreshCw size={14} aria-hidden="true" />} onClick={() => generate.mutate()}>
-                Regenerate
-              </Button>
-            </div>
-          </>
-        ) : hasData ? (
-          <div>
-            <p className="text-[0.9375rem] text-label-secondary">
-              Get a plain-language explanation of this period: what changed, what stands out, and where you could save.
-            </p>
-            <Button className="mt-4" icon={<Sparkles size={16} aria-hidden="true" />} onClick={() => generate.mutate()}>
-              Analyze spending
+            <Button variant={data.state === 'stale' ? 'secondary' : 'plain'} size="sm" icon={<RefreshCw size={14} aria-hidden="true" />} onClick={analyze}>
+              Regenerate
             </Button>
           </div>
-        ) : (
-          <p className="text-[0.9375rem] text-label-secondary">There are no transactions in this period to analyze.</p>
-        )}
+        </div>
+      );
+    }
+    if (hasData) {
+      return (
+        <div className="fade-in">
+          <p className="text-[0.9375rem] text-label-secondary">Get a plain-language explanation of this period: what changed, what stands out, and where you could save.</p>
+          <Button className="mt-4" icon={<Sparkles size={16} aria-hidden="true" />} onClick={analyze}>
+            Analyze spending
+          </Button>
+        </div>
+      );
+    }
+    return <p className="fade-in text-[0.9375rem] text-label-secondary">There are no transactions in this period to analyze.</p>;
+  }
 
-        {generate.isError && (
-          <p role="alert" className="mt-4 text-[0.9375rem] text-critical">
-            {errorMessage(generate.error)}
-          </p>
-        )}
+  return (
+    <section aria-labelledby={titleId} aria-busy={analysis.isPending || generate.isPending} className={INSIGHT_CARD}>
+      <div>
+        <div className="mb-3 flex items-center gap-3">
+          <AiMark />
+          <InsightTitle id={titleId} compact={compact} />
+          {data?.generatedAt && !generate.isPending && <span className="caption fade-in ml-auto hidden sm:inline">Generated {formatRelativeTime(data.generatedAt)}</span>}
+        </div>
+
+        <AutoHeight>
+          {body()}
+          {generate.isError && (
+            <p role="alert" className="mt-4 text-[0.9375rem] text-critical">
+              {errorMessage(generate.error)}
+            </p>
+          )}
+        </AutoHeight>
       </div>
     </section>
   );
@@ -193,23 +248,15 @@ export function AnalysisCorrections({ response }: { response: AnalysisResponse }
       <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="caption flex items-center gap-1.5 hover:text-label">
         <ShieldCheck size={14} aria-hidden="true" />
         FinSight checked this analysis and adjusted {response.corrections.length} {response.corrections.length === 1 ? 'item' : 'items'}
-        <ChevronDown size={14} className={cn('transition-transform', open && 'rotate-180')} aria-hidden="true" />
+        <ChevronDown size={14} className={cn('transition-transform duration-200', open && 'rotate-180')} aria-hidden="true" />
       </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.ul
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="caption mt-2 list-disc space-y-1 overflow-hidden pl-8"
-          >
-            {response.corrections.map((c, i) => (
-              <li key={i}>{c.message}</li>
-            ))}
-          </motion.ul>
-        )}
-      </AnimatePresence>
+      <Collapse open={open}>
+        <ul className="caption list-disc space-y-1 pt-2 pl-8">
+          {response.corrections.map((c, i) => (
+            <li key={i}>{c.message}</li>
+          ))}
+        </ul>
+      </Collapse>
     </div>
   );
 }
-

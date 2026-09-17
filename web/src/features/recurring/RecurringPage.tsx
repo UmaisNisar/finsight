@@ -1,23 +1,16 @@
 import { CalendarClock, Repeat } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { errorMessage } from '@/api/client';
-import { useRecurring } from '@/api/queries';
+import { useHasAnyData, useRecurring } from '@/api/queries';
 import type { Recurring } from '@/api/schemas';
 import { PageHeader } from '@/components/PageHeader';
-import { Card, EmptyState, ErrorState, Pill, Skeleton } from '@/components/ui/primitives';
+import { Card, EmptyState, ErrorState, GroupedList, RowSkeleton, Skeleton } from '@/components/ui/primitives';
 import { usePreferences } from '@/hooks/usePreferences';
 import { cn } from '@/lib/cn';
 import { CategoryGlyph, groupIdOf } from '@/lib/categories';
 import { formatMoney, formatShortDate } from '@/lib/format';
-import { toIsoDate } from '@/lib/period';
-
-const FREQUENCY: Record<Recurring['frequency'], string> = {
-  weekly: 'Weekly',
-  biweekly: 'Every 2 weeks',
-  monthly: 'Monthly',
-  quarterly: 'Quarterly',
-  annual: 'Yearly',
-};
+import { FREQUENCY_LABEL } from '@/lib/labels';
+import { localIsoDate } from '@/lib/period';
 
 const SECTIONS: { kind: Recurring['kind'][]; title: string }[] = [
   { kind: ['subscription'], title: 'Subscriptions' },
@@ -34,9 +27,9 @@ function RecurringRow({ item, currency, dateFormat }: { item: Recurring; currenc
       <div className="min-w-0 flex-1">
         <p className="truncate text-[0.9375rem] font-medium">{item.merchant}</p>
         <p className="caption truncate">
-          {FREQUENCY[item.frequency]}
+          {FREQUENCY_LABEL[item.frequency]}
           {item.amountVaries && ' · amount varies'}
-          {item.isActive ? ` · next ~${formatShortDate(item.nextExpectedDate, dateFormat)}` : ` · last ${formatShortDate(item.lastDate, dateFormat)}`}
+          {item.isActive ? ` · next ~${formatShortDate(item.nextExpectedDate, dateFormat)}` : ` · last ${formatShortDate(item.lastDate, dateFormat)}, may be cancelled`}
         </p>
       </div>
       <div className="text-right">
@@ -50,6 +43,38 @@ function RecurringRow({ item, currency, dateFormat }: { item: Recurring; currenc
   );
 }
 
+function Total({ label, value, hero, suffix, className }: { label: string; value?: string; hero?: boolean; suffix?: ReactNode; className?: string }) {
+  return (
+    <div className={className}>
+      <p className="eyebrow">{label}</p>
+      <p className={cn('mt-1.5', hero ? 'figure-hero' : 'figure text-[1.75rem]')}>
+        {value ?? <Skeleton className="h-[1em] w-[4.5ch] rounded-xl" />}
+        {value && suffix}
+      </p>
+    </div>
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <div className="space-y-8" aria-hidden="true">
+      {[4, 3].map((rows, i) => (
+        <div key={i}>
+          <div className="mb-3 flex h-6 items-center justify-between px-1">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-3 w-16" />
+          </div>
+          <div className="card grouped overflow-hidden">
+            {Array.from({ length: rows }, (_, j) => (
+              <RowSkeleton key={j} className="px-4 py-3 md:px-5" />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function RecurringPage() {
   const recurring = useRecurring();
   const prefs = usePreferences();
@@ -58,26 +83,25 @@ export default function RecurringPage() {
 
   const [{ today, in30 }] = useState(() => {
     const now = new Date();
-    return { today: toIsoDate(now), in30: toIsoDate(new Date(now.getTime() + 30 * 86_400_000)) };
+    return { today: localIsoDate(now), in30: localIsoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 30)) };
   });
   const upcoming = (data?.items ?? [])
     .filter((i) => i.isActive && !i.isIncome && i.nextExpectedDate >= today && i.nextExpectedDate <= in30)
     .sort((a, b) => a.nextExpectedDate.localeCompare(b.nextExpectedDate));
 
+  const noData = useHasAnyData() === false;
+  // Known empty before the list arrives when the account has nothing imported, so no skeleton collapses into the empty card.
+  const empty = data ? data.items.length === 0 : noData;
+
   return (
     <div>
       <PageHeader title="Recurring" subtitle="Subscriptions, bills and regular income, detected from your transactions." />
 
-      {recurring.isPending ? (
-        <div className="space-y-6" aria-busy="true">
-          <Skeleton className="h-36 w-full rounded-[20px]" />
-          <Skeleton className="h-72 w-full rounded-[20px]" />
-        </div>
-      ) : recurring.isError || !data ? (
+      {recurring.isError ? (
         <Card>
           <ErrorState message={errorMessage(recurring.error)} onRetry={() => void recurring.refetch()} />
         </Card>
-      ) : data.items.length === 0 ? (
+      ) : empty ? (
         <Card>
           <EmptyState
             icon={<Repeat size={24} aria-hidden="true" />}
@@ -87,73 +111,66 @@ export default function RecurringPage() {
         </Card>
       ) : (
         <div className="space-y-8">
-          <Card className="grid gap-6 p-6 sm:grid-cols-3 md:p-8">
-            <div>
-              <p className="eyebrow">Every month</p>
-              <p className="figure-hero mt-1.5">{formatMoney(data.monthlyTotal, currency, { whole: true })}</p>
-            </div>
-            <div className="sm:pt-6">
-              <p className="eyebrow">Per year</p>
-              <p className="figure mt-1.5 text-[1.75rem]">{formatMoney(data.annualTotal, currency, { whole: true })}</p>
-            </div>
-            <div className="sm:pt-6">
-              <p className="eyebrow">Subscriptions</p>
-              <p className="figure mt-1.5 text-[1.75rem]">
-                {formatMoney(data.monthlySubscriptions, currency, { whole: true })}
-                <span className="text-[1rem] font-normal text-label-secondary">/mo</span>
-              </p>
-            </div>
-            {data.aiReviewed && (
-              <p className="caption sm:col-span-3">Detected from your transaction history. Labels such as subscription or bill were suggested by AI.</p>
-            )}
+          <Card className="grid gap-6 p-6 sm:grid-cols-3 md:p-8" aria-label="Recurring totals" aria-busy={!data}>
+            <Total label="Every month" hero value={data && formatMoney(data.monthlyTotal, currency, { whole: true })} />
+            <Total label="Per year" className="sm:pt-6" value={data && formatMoney(data.annualTotal, currency, { whole: true })} />
+            <Total
+              label="Subscriptions"
+              className="sm:pt-6"
+              value={data && formatMoney(data.monthlySubscriptions, currency, { whole: true })}
+              suffix={<span className="text-[1rem] font-normal text-label-secondary">/mo</span>}
+            />
+            {data?.aiReviewed && <p className="caption fade-in sm:col-span-3">Detected from your transaction history. Labels such as subscription or bill were suggested by AI.</p>}
           </Card>
 
-          {upcoming.length > 0 && (
-            <section aria-labelledby="upcoming-title">
-              <h2 id="upcoming-title" className="title-section mb-3 flex items-center gap-2 px-1">
-                <CalendarClock size={20} className="text-label-secondary" aria-hidden="true" />
-                Next 30 days
-              </h2>
-              <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
-                <ul className="flex gap-3">
-                  {upcoming.map((item) => (
-                    <li key={item.merchantKey} className="card w-44 shrink-0 p-4">
-                      <CategoryGlyph groupId={groupIdOf(item.categoryId)} size={32} />
-                      <p className="mt-3 truncate text-[0.9375rem] font-medium">{item.merchant}</p>
-                      <p className="caption">{formatShortDate(item.nextExpectedDate, prefs.dateFormat)}</p>
-                      <p className="tabular mt-2 text-[1.0625rem] font-semibold">{formatMoney(item.amount, currency)}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </section>
-          )}
-
-          {SECTIONS.map((section) => {
-            const items = data.items.filter((i) => section.kind.includes(i.kind)).sort((a, b) => Number(b.isActive) - Number(a.isActive) || b.monthlyEquivalent - a.monthlyEquivalent);
-            if (items.length === 0) return null;
-            const monthly = items.filter((i) => i.isActive).reduce((sum, i) => sum + i.monthlyEquivalent, 0);
-            return (
-              <section key={section.title} aria-labelledby={`section-${section.title}`}>
-                <div className="mb-3 flex items-baseline justify-between px-1">
-                  <h2 id={`section-${section.title}`} className="title-section">
-                    {section.title}
+          {!data ? (
+            <ListSkeleton />
+          ) : (
+            <div className="space-y-8">
+              {upcoming.length > 0 && (
+                <section aria-labelledby="upcoming-title">
+                  <h2 id="upcoming-title" className="title-section mb-3 flex items-center gap-2 px-1">
+                    <CalendarClock size={20} className="text-label-secondary" aria-hidden="true" />
+                    Next 30 days
                   </h2>
-                  <p className="caption tabular">{formatMoney(monthly, currency, { whole: true })}/mo</p>
-                </div>
-                <ul className="card overflow-hidden [&>li+li]:shadow-[inset_0_0.5px_0_var(--separator)]">
-                  {items.map((item) => (
-                    <RecurringRow key={item.merchantKey + item.isIncome} item={item} currency={currency} dateFormat={prefs.dateFormat} />
-                  ))}
-                </ul>
-                {items.some((i) => !i.isActive) && (
-                  <p className="caption mt-2 px-1">
-                    <Pill>Faded</Pill> items haven’t charged recently and may be cancelled.
-                  </p>
-                )}
-              </section>
-            );
-          })}
+                  <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+                    <ul className="flex gap-3">
+                      {upcoming.map((item) => (
+                        <li key={item.merchantKey} className="card w-44 shrink-0 p-4">
+                          <CategoryGlyph groupId={groupIdOf(item.categoryId)} size={32} />
+                          <p className="mt-3 truncate text-[0.9375rem] font-medium">{item.merchant}</p>
+                          <p className="caption">{formatShortDate(item.nextExpectedDate, prefs.dateFormat)}</p>
+                          <p className="tabular mt-2 text-[1.0625rem] font-semibold">{formatMoney(item.amount, currency)}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </section>
+              )}
+
+              {SECTIONS.map((section) => {
+                const items = data.items.filter((i) => section.kind.includes(i.kind)).sort((a, b) => Number(b.isActive) - Number(a.isActive) || b.monthlyEquivalent - a.monthlyEquivalent);
+                if (items.length === 0) return null;
+                const monthly = items.filter((i) => i.isActive).reduce((sum, i) => sum + i.monthlyEquivalent, 0);
+                const id = `section-${section.kind[0]}`;
+                return (
+                  <section key={section.title} aria-labelledby={id}>
+                    <div className="mb-3 flex items-baseline justify-between px-1">
+                      <h2 id={id} className="title-section">
+                        {section.title}
+                      </h2>
+                      <p className="caption tabular">{formatMoney(monthly, currency, { whole: true })}/mo</p>
+                    </div>
+                    <GroupedList>
+                      {items.map((item) => (
+                        <RecurringRow key={item.merchantKey + item.isIncome} item={item} currency={currency} dateFormat={prefs.dateFormat} />
+                      ))}
+                    </GroupedList>
+                  </section>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

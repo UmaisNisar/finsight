@@ -23,6 +23,8 @@ export function StatusPill({ status }: { status: Statement['status'] }) {
           {status === 'downloading' ? 'Downloading' : 'Processing'}
         </Pill>
       );
+    case 'awaitingUpload':
+      return <Pill tone="attention">Needs PDF</Pill>;
     default:
       return <Pill>Not analyzed</Pill>;
   }

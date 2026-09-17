@@ -20,6 +20,8 @@ export const sessionUserSchema = z.object({
   name: z.string(),
   email: z.string(),
   isDemo: z.boolean(),
+  /** Missing on servers that predate onboarding: treat those accounts as already set up. */
+  onboardingCompleted: z.boolean().default(true),
 });
 
 export const sessionSchema = z.object({
@@ -64,7 +66,11 @@ export const jobStartedSchema = z.object({ jobId: z.string() });
 export const uploadStartedSchema = z.object({ jobId: z.string(), statementId: z.string() });
 
 export const accountTypeSchema = z.enum(['unknown', 'chequing', 'savings', 'creditCard', 'lineOfCredit', 'investment']);
-export const statementStatusSchema = z.enum(['discovered', 'downloading', 'processing', 'processed', 'failed']);
+/**
+ * `awaitingUpload` is a statement alert: the bank emailed that a statement is ready but didn't attach it, so the user
+ * downloads the PDF from online banking and uploads it. `dismissed` alerts are never listed.
+ */
+export const statementStatusSchema = z.enum(['discovered', 'downloading', 'processing', 'processed', 'failed', 'awaitingUpload', 'dismissed']);
 
 export const statementSchema = z.object({
   id: z.string(),
@@ -87,6 +93,37 @@ export const statementSchema = z.object({
   transactionCount: z.number(),
   canReprocess: z.boolean(),
   reprocessNeedsUpload: z.boolean(),
+  /** The email subject (masked), and why FinSight thinks it's a statement. Optional for older servers. */
+  subject: z.string().nullable().default(null),
+  detectionReasons: z.array(z.string()).default([]),
+  /** For alerts: the bank's sign-in page and how to download statements there, from FinSight's own list (never the email). */
+  signInUrl: z.string().nullable().default(null),
+  downloadHint: z.string().nullable().default(null),
+});
+
+/**
+ * The statements list, tolerant of statuses this version doesn't know yet: such items are left out rather than
+ * failing the whole list. Any other mismatch still fails. Dismissed alerts are never shown.
+ */
+export const statementListSchema = z.array(z.unknown()).transform((items, ctx) => {
+  const statements: z.infer<typeof statementSchema>[] = [];
+  items.forEach((item, index) => {
+    const parsed = statementSchema.safeParse(item);
+    if (parsed.success) {
+      if (parsed.data.status !== 'dismissed') statements.push(parsed.data);
+    } else if (!parsed.error.issues.every((issue) => issue.path.length === 1 && issue.path[0] === 'status')) {
+      for (const issue of parsed.error.issues) ctx.issues.push({ code: 'custom', message: issue.message, path: [index, ...issue.path], input: item });
+    }
+  });
+  return statements;
+});
+
+/** A bank FinSight knows how to guide people through: where to sign in and how to download statements. */
+export const institutionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  signInUrl: z.string().nullable().default(null),
+  downloadHint: z.string().nullable().default(null),
 });
 
 export const transactionTypeSchema = z.enum(['income', 'expense', 'transfer']);
@@ -300,15 +337,26 @@ export const analysisResponseSchema = z.object({
   currency: z.string(),
 });
 
+export const aiKeySchema = z.object({
+  hasUserKey: z.boolean(),
+  /** The last characters of the saved key, like "…Ab3x". The key itself is never returned. */
+  hint: z.string().nullable(),
+  serverKeyAvailable: z.boolean(),
+  model: z.string(),
+});
+
 export const apiErrorSchema = z.object({ code: z.string(), message: z.string() });
 
 export type Capabilities = z.infer<typeof capabilitiesSchema>;
 export type Session = z.infer<typeof sessionSchema>;
+export type SessionUser = z.infer<typeof sessionUserSchema>;
 export type Settings = z.infer<typeof settingsSchema>;
 export type GmailConnection = z.infer<typeof gmailConnectionSchema>;
 export type Job = z.infer<typeof jobSchema>;
 export type JobStep = Job['steps'][number];
 export type Statement = z.infer<typeof statementSchema>;
+export type StatementStatus = z.infer<typeof statementStatusSchema>;
+export type Institution = z.infer<typeof institutionSchema>;
 export type StatementDetail = z.infer<typeof statementDetailSchema>;
 export type Transaction = z.infer<typeof transactionSchema>;
 export type TransactionType = z.infer<typeof transactionTypeSchema>;
@@ -320,5 +368,6 @@ export type CategorySpending = z.infer<typeof categorySpendingSchema>;
 export type Recurring = z.infer<typeof recurringSchema>;
 export type RecurringResponse = z.infer<typeof recurringResponseSchema>;
 export type Anomaly = z.infer<typeof anomalySchema>;
+export type AiKey = z.infer<typeof aiKeySchema>;
 export type Analysis = z.infer<typeof analysisSchema>;
 export type AnalysisResponse = z.infer<typeof analysisResponseSchema>;

@@ -1,5 +1,5 @@
-import { motion } from 'motion/react';
 import { useId, type KeyboardEvent } from 'react';
+import { useSlidingIndicator } from '@/hooks/useSlidingIndicator';
 import { cn } from '@/lib/cn';
 
 interface Option<T extends string> {
@@ -16,9 +16,13 @@ interface Props<T extends string> {
   size?: 'sm' | 'md';
 }
 
-/** An iOS-style segmented control, implemented as an accessible radio group with arrow-key navigation. */
+/**
+ * An iOS-style segmented control, implemented as an accessible radio group with arrow-key navigation.
+ * A single glass thumb slides between segments, measured within the control so it can't fly in from elsewhere.
+ */
 export function SegmentedControl<T extends string>({ label, options, value, onChange, className, size = 'md' }: Props<T>) {
   const id = useId();
+  const { container, lens } = useSlidingIndicator<HTMLDivElement, HTMLSpanElement>('[aria-checked="true"]', value);
 
   function onKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     const index = options.findIndex((o) => o.value === value);
@@ -33,11 +37,8 @@ export function SegmentedControl<T extends string>({ label, options, value, onCh
   }
 
   return (
-    <div
-      role="radiogroup"
-      aria-label={label}
-      className={cn('relative inline-flex rounded-[10px] bg-fill p-0.5', className)}
-    >
+    <div ref={container} role="radiogroup" aria-label={label} className={cn('glass-control inline-flex rounded-full p-1', className)}>
+      <span ref={lens} aria-hidden="true" className="sliding-lens glass-lens rounded-full opacity-0" />
       {options.map((option) => {
         const selected = option.value === value;
         return (
@@ -51,19 +52,12 @@ export function SegmentedControl<T extends string>({ label, options, value, onCh
             onClick={() => onChange(option.value)}
             onKeyDown={onKeyDown}
             className={cn(
-              'relative flex-1 rounded-[8px] font-medium whitespace-nowrap transition-colors',
+              'relative flex-1 rounded-full font-medium whitespace-nowrap transition-colors duration-200',
               size === 'sm' ? 'h-7 px-2.5 text-[0.8125rem]' : 'h-8 px-3.5 text-[0.875rem]',
               selected ? 'text-label' : 'text-label-secondary hover:text-label',
             )}
           >
-            {selected && (
-              <motion.span
-                layoutId={`${id}-thumb`}
-                className="absolute inset-0 rounded-[8px] bg-surface-raised shadow-[0_1px_3px_rgb(0_0_0/0.12),0_0_0_0.5px_rgb(0_0_0/0.04)]"
-                transition={{ type: 'spring', stiffness: 500, damping: 38 }}
-              />
-            )}
-            <span className="relative">{option.label}</span>
+            {option.label}
           </button>
         );
       })}

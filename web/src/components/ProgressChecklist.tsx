@@ -29,9 +29,9 @@ function StepIcon({ status }: { status: JobStep['status'] }) {
         </span>
       );
     case 'running':
-      return <span className="size-5 animate-spin rounded-full border-2 border-accent/25 border-t-accent" />;
+      return <span className="block size-5 animate-spin rounded-full border-2 border-accent/25 border-t-accent" />;
     default:
-      return <span className="size-5 rounded-full border-[1.5px] border-dashed border-label-tertiary/60" />;
+      return <span className="block size-5 rounded-full border-[1.5px] border-dashed border-label-tertiary/60" />;
   }
 }
 
@@ -56,7 +56,7 @@ export function ProgressChecklist({ steps }: { steps: JobStep[] }) {
             animate={{ opacity: 1, y: 0 }}
             className="flex items-start gap-3"
           >
-            <span className="mt-px" aria-hidden="true">
+            <span className="mt-px flex" aria-hidden="true">
               <StepIcon status={step.status} />
             </span>
             <div className="min-w-0 flex-1">

@@ -1,16 +1,20 @@
 import { useMutation } from '@tanstack/react-query';
 import { FileText, RotateCw, Trash2, Upload } from 'lucide-react';
-import { useRef } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { errorMessage } from '@/api/client';
 import { api } from '@/api/endpoints';
 import { useInvalidateFinancialData, useStatement } from '@/api/queries';
 import type { Statement } from '@/api/schemas';
+import { useConfirm } from '@/app/providers/ConfirmProvider';
 import { useJobs } from '@/app/providers/JobsProvider';
 import { useToast } from '@/app/providers/ToastProvider';
 import { Button } from '@/components/ui/Button';
 import { Sheet } from '@/components/ui/Sheet';
 import { ErrorState, Skeleton } from '@/components/ui/primitives';
+import { useRetained } from '@/hooks/useRetained';
+import { useSingleFlight } from '@/hooks/useSingleFlight';
 import { CategoryGlyph } from '@/lib/categories';
+import { cn } from '@/lib/cn';
 import { accountLabel, formatDate, formatMoney } from '@/lib/format';
 import { StatusPill } from './StatusPill';
 
@@ -23,21 +27,54 @@ const ACCOUNT_TYPE: Record<Statement['accountType'], string> = {
   investment: 'Investment',
 };
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-4 px-4 py-3">
       <dt className="text-[0.9375rem] text-label-secondary">{label}</dt>
-      <dd className="m-0 text-right text-[0.9375rem]">{children}</dd>
+      <dd className="m-0 min-w-0 text-right text-[0.9375rem] break-words">{children}</dd>
     </div>
   );
 }
 
+function DetailSkeleton() {
+  const rows = (count: number) => (
+    <div className="card grouped overflow-hidden">
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="flex items-center justify-between px-4 py-3">
+          <Skeleton className="my-[3px] h-4 w-24" />
+          <Skeleton className="h-4 w-32" />
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <div className="space-y-6" aria-hidden="true">
+      <Skeleton className="h-6 w-24 rounded-full" />
+      {rows(4)}
+      <div>
+        <Skeleton className="mx-1 mb-2 h-3 w-14" />
+        {rows(3)}
+      </div>
+    </div>
+  );
+}
+
+/** A statement's details and actions. Opens for `statementId`; keeps the last statement while it animates closed. */
 export function StatementDetail({ statementId, dateFormat, currency, onClose }: { statementId: string | null; dateFormat: string; currency: string; onClose: () => void }) {
-  const detail = useStatement(statementId);
+  const { item, open, key } = useRetained(statementId);
+  if (!item) return null;
+  // A fresh sheet per opening, so an error from one statement's action never shows on another.
+  return <StatementSheet key={key} statementId={item} open={open} dateFormat={dateFormat} currency={currency} onClose={onClose} />;
+}
+
+function StatementSheet({ statementId, open, dateFormat, currency, onClose }: { statementId: string; open: boolean; dateFormat: string; currency: string; onClose: () => void }) {
+  const detail = useStatement(statementId, open);
   const jobs = useJobs();
   const toast = useToast();
+  const confirm = useConfirm();
   const invalidate = useInvalidateFinancialData();
   const fileInput = useRef<HTMLInputElement>(null);
+  const once = useSingleFlight();
 
   const reprocess = useMutation({
     mutationFn: (id: string) => api.processStatements([id]),
@@ -58,9 +95,9 @@ export function StatementDetail({ statementId, dateFormat, currency, onClose }: 
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteStatement(id),
     onSuccess: async () => {
-      await invalidate();
-      toast('Statement and its transactions deleted', 'success');
       onClose();
+      toast('Statement and its transactions deleted', 'success');
+      await invalidate();
     },
   });
 
@@ -70,23 +107,29 @@ export function StatementDetail({ statementId, dateFormat, currency, onClose }: 
 
   return (
     <Sheet
-      open={statementId !== null}
+      open={open}
       onClose={onClose}
       size="lg"
-      title={statement ? statement.title : 'Statement'}
-      subtitle={statement ? accountLabel(statement.institution, statement.accountMask) : undefined}
+      title={statement ? statement.title : detail.isPending ? <Skeleton className="my-[0.1em] h-[1em] w-56" /> : 'Statement'}
+      subtitle={statement ? accountLabel(statement.institution, statement.accountMask) : detail.isPending ? <Skeleton className="my-[0.2em] h-[1em] w-32" /> : undefined}
       footer={
-        statement && (
+        statement ? (
           <>
             <Button
               variant="destructive-plain"
               icon={<Trash2 size={16} aria-hidden="true" />}
               loading={remove.isPending}
-              onClick={() => {
-                if (window.confirm('Delete this statement and all of its transactions? This can’t be undone.')) {
-                  remove.mutate(statement.id);
-                }
-              }}
+              onClick={() =>
+                void once(async () => {
+                  const ok = await confirm({
+                    title: 'Delete this statement?',
+                    message: 'The statement and all of its transactions will be removed. This can’t be undone.',
+                    confirmLabel: 'Delete',
+                    destructive: true,
+                  });
+                  if (ok) await remove.mutateAsync(statement.id);
+                })
+              }
             >
               Delete
             </Button>
@@ -102,7 +145,7 @@ export function StatementDetail({ statementId, dateFormat, currency, onClose }: 
                     aria-hidden="true"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
-                      if (file) reupload.mutate({ file, id: statement.id });
+                      if (file) void once(() => reupload.mutateAsync({ file, id: statement.id }));
                       e.target.value = '';
                     }}
                   />
@@ -112,25 +155,24 @@ export function StatementDetail({ statementId, dateFormat, currency, onClose }: 
                 </>
               ) : (
                 statement.canReprocess && (
-                  <Button icon={<RotateCw size={16} aria-hidden="true" />} loading={reprocess.isPending} onClick={() => reprocess.mutate(statement.id)}>
+                  <Button icon={<RotateCw size={16} aria-hidden="true" />} loading={reprocess.isPending} onClick={() => void once(() => reprocess.mutateAsync(statement.id))}>
                     {statement.status === 'discovered' ? 'Analyze' : 'Reprocess'}
                   </Button>
                 )
               )}
             </div>
           </>
-        )
+        ) : detail.isPending ? (
+          <Skeleton className="h-10 w-24 rounded-full" />
+        ) : undefined
       }
     >
       {detail.isPending ? (
-        <div className="space-y-3" aria-busy="true">
-          <Skeleton className="h-24 w-full rounded-2xl" />
-          <Skeleton className="h-48 w-full rounded-2xl" />
-        </div>
+        <DetailSkeleton />
       ) : detail.isError || !data || !statement ? (
         <ErrorState message={errorMessage(detail.error)} onRetry={() => void detail.refetch()} />
       ) : (
-        <div className="space-y-6">
+        <div className="fade-in space-y-6">
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill status={statement.status} />
             {statement.extractionConfidence !== null && statement.status === 'processed' && (
@@ -152,7 +194,7 @@ export function StatementDetail({ statementId, dateFormat, currency, onClose }: 
             </ul>
           )}
 
-          <dl className="card m-0 overflow-hidden [&>div+div]:shadow-[inset_0_0.5px_0_var(--separator)]">
+          <dl className="card grouped m-0 overflow-hidden">
             <Row label="Account">
               {ACCOUNT_TYPE[statement.accountType]}
               {statement.accountMask && ` ••${statement.accountMask}`}
@@ -171,13 +213,13 @@ export function StatementDetail({ statementId, dateFormat, currency, onClose }: 
             <h3 id="source-title" className="eyebrow mb-2 px-1">
               Source
             </h3>
-            <dl className="card m-0 overflow-hidden [&>div+div]:shadow-[inset_0_0.5px_0_var(--separator)]">
+            <dl className="card grouped m-0 overflow-hidden">
               <Row label="From">{statement.source === 'manualUpload' ? 'Uploaded by you' : statement.source === 'demo' ? 'Sample data' : (statement.senderName ?? 'Gmail')}</Row>
               {data.subject && <Row label="Subject">{data.subject}</Row>}
               {statement.receivedAt && <Row label={statement.source === 'manualUpload' ? 'Uploaded' : 'Received'}>{formatDate(statement.receivedAt.slice(0, 10), dateFormat)}</Row>}
               <Row label="File">
                 <span className="inline-flex items-center gap-1.5">
-                  <FileText size={14} aria-hidden="true" className="text-label-tertiary" />
+                  <FileText size={14} aria-hidden="true" className="shrink-0 text-label-tertiary" />
                   {statement.filename}
                 </span>
               </Row>
@@ -194,7 +236,7 @@ export function StatementDetail({ statementId, dateFormat, currency, onClose }: 
               <h3 id="extracted-title" className="eyebrow mb-2 px-1">
                 Extracted transactions
               </h3>
-              <ul className="card overflow-hidden [&>li+li]:shadow-[inset_0_0.5px_0_var(--separator)]">
+              <ul className="card grouped overflow-hidden">
                 {data.transactions.map((t) => (
                   <li key={t.id} className="flex items-center gap-3 px-4 py-2.5">
                     <CategoryGlyph groupId={t.groupId} type={t.type} size={30} />
@@ -204,7 +246,7 @@ export function StatementDetail({ statementId, dateFormat, currency, onClose }: 
                         {formatDate(t.date, dateFormat)} · {t.type === 'transfer' ? 'Transfer' : t.categoryName}
                       </p>
                     </div>
-                    <p className={`tabular text-[0.875rem] ${t.type === 'income' ? 'text-positive' : ''}`}>{formatMoney(t.amount, t.currency, { signed: t.amount > 0 })}</p>
+                    <p className={cn('tabular text-[0.875rem]', t.type === 'income' && 'text-positive')}>{formatMoney(t.amount, t.currency, { signed: t.amount > 0 })}</p>
                   </li>
                 ))}
               </ul>

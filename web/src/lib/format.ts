@@ -33,15 +33,16 @@ export function formatMoney(amount: number, currency: string, options: { whole?:
   return amount < 0 ? `−${formatted}` : formatted;
 }
 
+const compactFormatters = new Map<string, Intl.NumberFormat>();
+
 /** $12.9K for axis ticks and compact labels. */
 export function formatMoneyCompact(amount: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency,
-    currencyDisplay: 'narrowSymbol',
-    notation: 'compact',
-    maximumFractionDigits: 1,
-  }).format(amount);
+  let formatter = compactFormatters.get(currency);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(undefined, { style: 'currency', currency, currencyDisplay: 'narrowSymbol', notation: 'compact', maximumFractionDigits: 1 });
+    compactFormatters.set(currency, formatter);
+  }
+  return formatter.format(amount);
 }
 
 export function formatPercent(value: number, options: { signed?: boolean; digits?: number } = {}): string {
@@ -85,9 +86,7 @@ export function formatDate(iso: string, dateFormat: string): string {
 /** "Sep 12" — compact dates inside lists, where the year is implied by grouping. */
 export function formatShortDate(iso: string, dateFormat: string): string {
   const date = parseIsoDate(iso);
-  if (dateFormat === 'yyyy-MM-dd' || dateFormat === 'MM/dd/yyyy') {
-    return `${MONTH_SHORT.format(date)} ${date.getDate()}`;
-  }
+  // Day-first formats keep the day first; everything else reads month first.
   return dateFormat === 'd MMM yyyy' || dateFormat === 'dd/MM/yyyy'
     ? `${date.getDate()} ${MONTH_SHORT.format(date)}`
     : `${MONTH_SHORT.format(date)} ${date.getDate()}`;
@@ -97,14 +96,18 @@ export function formatMonth(iso: string, style: 'short' | 'long' = 'short'): str
   return (style === 'short' ? MONTH_SHORT : MONTH_LONG).format(parseIsoDate(iso));
 }
 
+const MONTH_YEAR = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
+
 export function formatMonthYear(iso: string): string {
-  return new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(parseIsoDate(iso));
+  return MONTH_YEAR.format(parseIsoDate(iso));
 }
 
-export function formatRelativeTime(isoDateTime: string): string {
+const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+
+export function formatRelativeTime(isoDateTime: string, now = Date.now()): string {
   const then = new Date(isoDateTime).getTime();
-  const seconds = Math.round((then - Date.now()) / 1000);
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  const seconds = Math.round((then - now) / 1000);
+  const rtf = RELATIVE;
   const abs = Math.abs(seconds);
   if (abs < 60) return rtf.format(seconds, 'second');
   if (abs < 3600) return rtf.format(Math.round(seconds / 60), 'minute');

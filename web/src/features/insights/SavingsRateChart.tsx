@@ -1,5 +1,8 @@
+import { useReducedMotion } from 'motion/react';
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipContentProps } from 'recharts';
 import type { Summary } from '@/api/schemas';
+import { WidgetBoundary } from '@/components/errors/WidgetBoundary';
+import { Skeleton } from '@/components/ui/primitives';
 import { useChartColors } from '@/hooks/useChartColors';
 import { formatMonth, formatMonthYear, formatPercent } from '@/lib/format';
 
@@ -13,16 +16,35 @@ function RateTooltip({ active, payload }: Partial<TooltipContentProps<number, st
   const point = payload?.[0]?.payload as Point | undefined;
   if (!active || !point) return null;
   return (
-    <div className="glass rounded-xl px-3.5 py-2.5 text-[0.8125rem] shadow-float">
+    <div className="glass rounded-2xl px-3.5 py-2.5 text-[0.8125rem]">
       <p className="font-semibold">{formatMonthYear(point.month)}</p>
       <p className="tabular text-label-secondary">{point.rate === null ? 'No income recorded' : `Saved ${formatPercent(point.rate)} of income`}</p>
     </div>
   );
 }
 
-/** One series, one axis: answers "Is the share of income I keep going up or down?" */
-export function SavingsRateChart({ monthly }: { monthly: Summary['monthly'] }) {
+/** One series, one axis: answers "Is the share of income I keep going up or down?" Pass no data while loading. */
+export function SavingsRateChart({ monthly }: { monthly?: Summary['monthly'] }) {
+  return (
+    <WidgetBoundary name="savings-rate" message="The savings rate chart couldn’t be shown." minHeight={250} queryKeys={[['summary']]} resetKeys={[monthly]}>
+      <SavingsRateChartContent monthly={monthly} />
+    </WidgetBoundary>
+  );
+}
+
+function SavingsRateChartContent({ monthly }: { monthly?: Summary['monthly'] }) {
   const colors = useChartColors();
+  const reduceMotion = useReducedMotion() ?? false;
+
+  if (!monthly) {
+    return (
+      <div aria-hidden="true">
+        <Skeleton className="h-56 w-full rounded-2xl" />
+        <Skeleton className="mt-2 h-3.5 w-48" />
+      </div>
+    );
+  }
+
   const data: Point[] = monthly.filter((m) => m.hasData).map((m) => ({ month: m.month, label: formatMonth(m.month), rate: m.savingsRate }));
 
   if (data.length < 2) {
@@ -34,7 +56,7 @@ export function SavingsRateChart({ monthly }: { monthly: Summary['monthly'] }) {
   const last = data[data.length - 1];
 
   return (
-    <figure className="m-0">
+    <figure className="fade-in m-0">
       <div className="h-56" role="img" aria-label={`Savings rate over ${data.length} months, averaging ${formatPercent(average)}. Latest: ${last?.rate === null || !last ? 'no income' : formatPercent(last.rate)}.`}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 12, right: 12, bottom: 0, left: 0 }}>
@@ -53,6 +75,8 @@ export function SavingsRateChart({ monthly }: { monthly: Summary['monthly'] }) {
               connectNulls
               dot={{ r: 4, fill: colors['--series-1'], stroke: colors['--surface'], strokeWidth: 2 }}
               activeDot={{ r: 6, fill: colors['--series-1'], stroke: colors['--surface'], strokeWidth: 2 }}
+              isAnimationActive={!reduceMotion}
+              animationDuration={600}
             />
           </LineChart>
         </ResponsiveContainer>

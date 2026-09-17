@@ -1,11 +1,11 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'motion/react';
-import { FileSearch, Lock, ScanText, Sparkles } from 'lucide-react';
+import { FileSearch, Info, Lock, ScanText, Sparkles } from 'lucide-react';
 import { errorMessage } from '@/api/client';
-import { api } from '@/api/endpoints';
-import { keys } from '@/api/queries';
+import { useStartDemo } from '@/api/queries';
 import type { Capabilities } from '@/api/schemas';
-import { Button } from '@/components/ui/Button';
+import { useSessionExpired } from '@/components/errors/sessionNotice';
+import { Button, buttonStyles } from '@/components/ui/Button';
+import { useSingleFlight } from '@/hooks/useSingleFlight';
 
 const FEATURES = [
   {
@@ -25,6 +25,13 @@ const FEATURES = [
   },
 ];
 
+const PRIVACY = [
+  'Read-only Gmail access, used only to find statement emails and download their PDF attachments. FinSight never sends, deletes or changes email.',
+  'PDFs are processed in memory and not kept. Transactions are stored encrypted, with card and account numbers masked to the last four digits.',
+  'The AI receives totals and merchant names, never account numbers, email content or your identity.',
+  'You can disconnect Gmail and delete all of your data at any time. Your information is never sold or shared.',
+];
+
 function GoogleMark() {
   return (
     <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
@@ -36,101 +43,105 @@ function GoogleMark() {
   );
 }
 
+/**
+ * The signed-out screen. On laptops and desktops it is one centred composition that fits the viewport without
+ * scrolling: the pitch and sign-in on the left, what FinSight does and what it can access on the right.
+ * Type and spacing tighten on short viewports; phones stack the two columns and may scroll.
+ */
 export function WelcomePage({ capabilities }: { capabilities: Capabilities }) {
-  const client = useQueryClient();
-  const params = new URLSearchParams(window.location.search);
-  const authStatus = params.get('auth');
-
-  const demo = useMutation({
-    mutationFn: api.startDemo,
-    onSuccess: () => client.invalidateQueries({ queryKey: keys.session }),
-  });
+  const authStatus = new URLSearchParams(window.location.search).get('auth');
+  const demo = useStartDemo();
+  const once = useSingleFlight();
+  // The session ended while the app was open (a 401), rather than a first visit or choosing Sign out.
+  const expired = useSessionExpired();
 
   return (
-    <div className="flex min-h-dvh flex-col items-center px-5 pt-[max(3rem,env(safe-area-inset-top))] pb-10 sm:justify-center">
+    <div className="flex min-h-dvh items-center justify-center px-5 pt-[max(2rem,env(safe-area-inset-top))] pb-8 sm:px-8 lg:py-8">
       <motion.main
-        initial={{ opacity: 0, y: 12 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }}
-        className="w-full max-w-[560px]"
+        transition={{ duration: 0.45, ease: [0.2, 0.8, 0.2, 1] }}
+        className="grid w-full max-w-[1100px] items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.02fr)] lg:gap-14"
       >
-        <img src="/favicon.svg" alt="" className="mb-7 size-16 rounded-[18px] shadow-float" />
-        <h1 className="text-[2.75rem] leading-[1.05] font-bold tracking-[-0.035em] sm:text-[3.25rem]">
-          See where your
-          <br />
-          money goes.
-        </h1>
-        <p className="mt-4 max-w-md text-[1.1875rem] leading-snug text-label-secondary">
-          FinSight reads your bank statements and turns them into a clear picture of what you earn, spend and save.
-        </p>
-
-        {authStatus === 'failed' && (
-          <p role="alert" className="mt-6 rounded-xl bg-critical-soft px-4 py-3 text-[0.9375rem] text-critical">
-            Google sign-in didn’t complete. Try again.
+        <section aria-labelledby="welcome-title">
+          <img src="/favicon.svg" alt="" width={48} height={48} className="mb-5 size-12 rounded-[14px] shadow-float short:mb-4 short:size-11" />
+          <h1 id="welcome-title" className="welcome-title font-bold tracking-[-0.035em]">
+            See where your money goes.
+          </h1>
+          <p className="mt-3 max-w-md text-[1.125rem] leading-snug text-label-secondary short:text-[1.0625rem]">
+            FinSight reads your bank statements and turns them into a clear picture of what you earn, spend and save.
           </p>
-        )}
-        {authStatus === 'unavailable' && (
-          <p role="alert" className="mt-6 rounded-xl bg-attention-soft px-4 py-3 text-[0.9375rem] text-attention">
-            Google sign-in isn’t set up on this server yet.
-          </p>
-        )}
 
-        <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-          {capabilities.googleSignIn ? (
-            <a
-              href="/api/auth/google"
-              className="inline-flex h-12 items-center justify-center gap-2.5 rounded-full bg-label px-6 text-base font-medium text-canvas transition-transform active:scale-[0.98]"
-            >
-              <span className="flex size-6 items-center justify-center rounded-full bg-white">
-                <GoogleMark />
-              </span>
-              Continue with Google
-            </a>
-          ) : (
-            <Button size="lg" disabled title="Add Google OAuth credentials to the server to enable sign-in">
-              Continue with Google
-            </Button>
+          {expired && (
+            <p role="status" className="mt-5 flex items-start gap-2.5 rounded-xl bg-accent-soft px-4 py-3 text-[0.9375rem] text-label">
+              <Info size={18} className="mt-px shrink-0 text-accent" aria-hidden="true" />
+              You were signed out. Sign in again to continue.
+            </p>
           )}
-          {capabilities.demo && (
-            <Button size="lg" variant="secondary" loading={demo.isPending} onClick={() => demo.mutate()}>
-              Explore with sample data
-            </Button>
+          {authStatus === 'failed' && (
+            <p role="alert" className="mt-5 rounded-xl bg-critical-soft px-4 py-3 text-[0.9375rem] text-critical">
+              Google sign-in didn’t complete. Try again.
+            </p>
           )}
-        </div>
-        {demo.isError && (
-          <p role="alert" className="mt-3 text-[0.9375rem] text-critical">
-            {errorMessage(demo.error)}
-          </p>
-        )}
-        {!capabilities.googleSignIn && (
-          <p className="caption mt-3">Google sign-in needs OAuth credentials on the server. See the README.</p>
-        )}
+          {authStatus === 'unavailable' && (
+            <p role="alert" className="mt-5 rounded-xl bg-attention-soft px-4 py-3 text-[0.9375rem] text-attention">
+              Google sign-in isn’t set up on this server yet.
+            </p>
+          )}
 
-        <ul className="mt-12 space-y-6">
-          {FEATURES.map(({ icon: Icon, title, body }) => (
-            <li key={title} className="flex gap-4">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-surface text-accent shadow-soft">
-                <Icon size={20} aria-hidden="true" />
-              </span>
-              <div>
-                <h2 className="text-[1.0625rem] font-semibold tracking-[-0.01em]">{title}</h2>
-                <p className="mt-0.5 text-[0.9375rem] text-label-secondary">{body}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
+          <div className="mt-7 flex flex-col gap-3 sm:flex-row short:mt-6">
+            {capabilities.googleSignIn ? (
+              <a href="/api/auth/google" className={buttonStyles({ size: 'lg', className: 'gap-2.5' })}>
+                <span className="flex size-6 items-center justify-center rounded-full bg-white">
+                  <GoogleMark />
+                </span>
+                Continue with Google
+              </a>
+            ) : (
+              <Button size="lg" disabled title="Add Google OAuth credentials to the server to enable sign-in">
+                Continue with Google
+              </Button>
+            )}
+            {capabilities.demo && (
+              <Button size="lg" variant="secondary" loading={demo.isPending} onClick={() => void once(() => demo.mutateAsync())}>
+                Explore with sample data
+              </Button>
+            )}
+          </div>
+          {demo.isError && (
+            <p role="alert" className="mt-3 text-[0.9375rem] text-critical">
+              {errorMessage(demo.error)}
+            </p>
+          )}
+          {!capabilities.googleSignIn && <p className="caption mt-3">Google sign-in needs OAuth credentials on the server. See the README.</p>}
+        </section>
 
-        <section aria-labelledby="privacy-title" className="mt-12 rounded-2xl bg-surface p-5 shadow-soft">
-          <h2 id="privacy-title" className="flex items-center gap-2 text-[0.9375rem] font-semibold">
-            <Lock size={16} aria-hidden="true" className="text-label-secondary" />
-            What FinSight accesses
-          </h2>
-          <ul className="mt-2 list-disc space-y-1.5 pl-5 text-[0.875rem] text-label-secondary marker:text-label-tertiary">
-            <li>Read-only Gmail access, used only to find statement emails and download their PDF attachments. FinSight never sends, deletes or changes email.</li>
-            <li>PDFs are processed in memory and not kept. Transactions are stored encrypted, with card and account numbers masked to the last four digits.</li>
-            <li>The AI receives totals and merchant names, never account numbers, email content or your identity.</li>
-            <li>You can disconnect Gmail and delete all of your data at any time. Your information is never sold or shared.</li>
+        <section aria-label="About FinSight" className="card p-6 sm:p-7 short:p-5">
+          <ul className="space-y-5 short:space-y-4">
+            {FEATURES.map(({ icon: Icon, title, body }) => (
+              <li key={title} className="flex gap-3.5">
+                <span className="glass-control flex size-9 shrink-0 items-center justify-center rounded-[11px] text-accent">
+                  <Icon size={18} aria-hidden="true" />
+                </span>
+                <div>
+                  <h2 className="text-[1rem] font-semibold tracking-[-0.01em]">{title}</h2>
+                  <p className="mt-0.5 text-[0.875rem] leading-snug text-label-secondary">{body}</p>
+                </div>
+              </li>
+            ))}
           </ul>
+
+          <div className="mt-6 border-t border-separator pt-5 short:mt-5 short:pt-4">
+            <h2 className="flex items-center gap-2 text-[0.875rem] font-semibold">
+              <Lock size={15} aria-hidden="true" className="text-label-secondary" />
+              What FinSight accesses
+            </h2>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-[0.8125rem] leading-snug text-label-secondary marker:text-label-tertiary">
+              {PRIVACY.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
         </section>
       </motion.main>
     </div>

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, ChevronRight, FileText, FileUp, Mail, RefreshCw } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { ChevronRight, FileText, FileUp, Mail, RefreshCw } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { errorMessage } from '@/api/client';
 import { api } from '@/api/endpoints';
@@ -9,21 +10,32 @@ import type { Statement } from '@/api/schemas';
 import { useJobs } from '@/app/providers/JobsProvider';
 import { useToast } from '@/app/providers/ToastProvider';
 import { PageHeader } from '@/components/PageHeader';
-import { Button } from '@/components/ui/Button';
-import { Card, EmptyState, ErrorState, Skeleton } from '@/components/ui/primitives';
+import { UploadProgressList, usePdfPicker } from '@/components/UploadProgressList';
+import { Collapse } from '@/components/ui/AutoHeight';
+import { Button, buttonStyles } from '@/components/ui/Button';
+import { Card, EmptyState, ErrorState, GroupedList, Skeleton } from '@/components/ui/primitives';
+import { RoundCheckbox } from '@/components/ui/RoundCheckbox';
+import { useGmailReturn } from '@/hooks/useGmailReturn';
 import { usePreferences } from '@/hooks/usePreferences';
-import { cn } from '@/lib/cn';
+import { useSingleFlight } from '@/hooks/useSingleFlight';
 import { accountLabel, formatDate, formatRelativeTime } from '@/lib/format';
+import { GMAIL_OUTCOME_MESSAGES, gmailConnectUrl } from '@/lib/gmail';
+import { discoveredName, isAlert, isPreselected } from '@/lib/statements';
+import { StatementAlertList, uploadRows, useClearWhenDone } from './StatementAlerts';
 import { StatementDetail } from './StatementDetail';
 import { StatusPill } from './StatusPill';
 
-const GMAIL_MESSAGES: Record<string, { text: string; tone: 'success' | 'error' }> = {
-  connected: { text: 'Gmail connected. Looking for statements…', tone: 'success' },
-  denied: { text: 'FinSight needs permission to read Gmail to find statements. Nothing was connected.', tone: 'error' },
-  failed: { text: 'Connecting Gmail didn’t complete. Try again.', tone: 'error' },
-  unavailable: { text: 'Gmail integration isn’t set up on this server.', tone: 'error' },
-  demo: { text: 'Demo mode uses sample statements. Sign in with Google to use your Gmail.', tone: 'error' },
-};
+/** Header uploads share one list; alert cards keep their own. */
+export const PAGE_UPLOAD_SCOPE = 'statements-page';
+
+/** Rows enter and leave with a short fade and slide, and the list closes the gap smoothly. */
+const ROW_MOTION = {
+  layout: 'position',
+  initial: { opacity: 0, y: -4 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, transition: { duration: 0.15 } },
+  transition: { type: 'spring', stiffness: 500, damping: 40 },
+} as const;
 
 function periodText(statement: Statement, dateFormat: string): string {
   if (statement.periodStart && statement.periodEnd) {
@@ -32,40 +44,54 @@ function periodText(statement: Statement, dateFormat: string): string {
   return statement.filename;
 }
 
+/** Gmail connection and scanning. Also finishes the Google consent round trip (?gmail=…) by announcing the outcome. */
 function GmailCard() {
   const session = useSession();
   const gmail = useGmail();
   const jobs = useJobs();
+  const toast = useToast();
+  const client = useQueryClient();
   const isDemo = session.data?.user?.isDemo ?? false;
   const available = session.data?.capabilities.gmail ?? false;
 
   const sync = useMutation({ mutationFn: api.syncStatements, onSuccess: ({ jobId }) => jobs.track(jobId) });
+  const once = useSingleFlight();
+
+  useGmailReturn((outcome) => {
+    const message = GMAIL_OUTCOME_MESSAGES[outcome];
+    toast(message.text, message.tone);
+    if (outcome === 'connected') {
+      void client.invalidateQueries({ queryKey: keys.gmail });
+      sync.mutate();
+    }
+  });
 
   if (isDemo || !available) {
     return null;
   }
 
-  if (gmail.isPending) {
-    return <Skeleton className="h-24 w-full rounded-[20px]" />;
-  }
-
   const connection = gmail.data;
+  const loading = gmail.isPending;
 
   return (
-    <Card className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center md:p-6" aria-labelledby="gmail-title">
+    <Card className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center md:p-6" aria-labelledby="gmail-title" aria-busy={loading}>
       <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent" aria-hidden="true">
         <Mail size={22} />
       </span>
       <div className="min-w-0 flex-1">
         <h2 id="gmail-title" className="text-[1.0625rem] font-semibold tracking-[-0.01em]">
-          {!connection?.connected ? 'Connect your Gmail' : connection.status === 'expired' ? 'Gmail connection expired' : 'Gmail'}
+          {loading ? 'Gmail' : !connection?.connected ? 'Connect your Gmail' : connection.status === 'expired' ? 'Gmail connection expired' : 'Gmail'}
         </h2>
         <p className="text-[0.9375rem] text-label-secondary">
-          {!connection?.connected
-            ? 'FinSight can automatically find bank statements in your inbox. Access is read-only.'
-            : connection.status === 'expired'
-              ? 'Reconnect your account to keep finding new statements.'
-              : `${connection.email}${connection.lastSyncedAt ? ` · scanned ${formatRelativeTime(connection.lastSyncedAt)}` : ''}`}
+          {loading ? (
+            <Skeleton className="my-[0.2em] h-[1em] w-60 max-w-full" />
+          ) : !connection?.connected ? (
+            'FinSight can automatically find bank statements in your inbox. Access is read-only.'
+          ) : connection.status === 'expired' ? (
+            'Reconnect your account to keep finding new statements.'
+          ) : (
+            `${connection.email}${connection.lastSyncedAt ? ` · scanned ${formatRelativeTime(connection.lastSyncedAt)}` : ''}`
+          )}
         </p>
         {sync.isError && (
           <p role="alert" className="mt-1 text-[0.875rem] text-critical">
@@ -73,12 +99,14 @@ function GmailCard() {
           </p>
         )}
       </div>
-      {!connection?.connected || connection.status === 'expired' ? (
-        <a href="/api/gmail/connect" className="inline-flex h-10 items-center justify-center rounded-full bg-accent px-5 text-[0.9375rem] font-medium text-accent-contrast">
+      {loading ? (
+        <Skeleton className="h-10 w-32 rounded-full" />
+      ) : !connection?.connected || connection.status === 'expired' ? (
+        <a href={gmailConnectUrl('/statements')} className={buttonStyles()}>
           {connection?.connected ? 'Reconnect' : 'Connect Gmail'}
         </a>
       ) : (
-        <Button variant="secondary" icon={<RefreshCw size={16} aria-hidden="true" />} loading={sync.isPending || (jobs.isActive && jobs.job?.kind === 'sync')} onClick={() => sync.mutate()}>
+        <Button variant="secondary" icon={<RefreshCw size={16} aria-hidden="true" />} loading={sync.isPending || (jobs.isActive && jobs.job?.kind === 'sync')} onClick={() => void once(() => sync.mutateAsync())}>
           Scan Gmail
         </Button>
       )}
@@ -88,20 +116,11 @@ function GmailCard() {
 
 function StatementRow({ statement, dateFormat, selectable, selected, onToggle, onOpen }: { statement: Statement; dateFormat: string; selectable?: boolean; selected?: boolean; onToggle?: () => void; onOpen: () => void }) {
   return (
-    <li className="flex items-center">
+    <motion.li className="flex items-center" {...ROW_MOTION}>
       {selectable && (
         <label className="flex h-full items-center py-4 pl-4 md:pl-5">
           <span className="sr-only">Select {statement.title}</span>
-          <input type="checkbox" checked={selected} onChange={onToggle} className="peer sr-only" />
-          <span
-            aria-hidden="true"
-            className={cn(
-              'flex size-[22px] items-center justify-center rounded-full border-[1.5px] transition-colors peer-focus-visible:outline-3 peer-focus-visible:outline-accent/50',
-              selected ? 'border-accent bg-accent text-white' : 'border-label-tertiary/60',
-            )}
-          >
-            {selected && <Check size={13} strokeWidth={3} />}
-          </span>
+          <RoundCheckbox checked={selected ?? false} onChange={() => onToggle?.()} />
         </label>
       )}
       <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3.5 px-4 py-3.5 text-left transition-colors hover:bg-fill md:px-5">
@@ -109,13 +128,9 @@ function StatementRow({ statement, dateFormat, selectable, selected, onToggle, o
           <FileText size={19} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[0.9375rem] font-medium">
-            {statement.status === 'discovered' ? (statement.institution ?? statement.senderName ?? 'Possible statement') : statement.title}
-          </p>
+          <p className="truncate text-[0.9375rem] font-medium">{statement.status === 'discovered' ? discoveredName(statement) : statement.title}</p>
           <p className="caption truncate">
-            {statement.status === 'discovered'
-              ? `${statement.title} · ${statement.filename}`
-              : `${accountLabel(statement.institution, statement.accountMask)} · ${periodText(statement, dateFormat)}`}
+            {statement.status === 'discovered' ? `${statement.title} · ${statement.filename}` : `${accountLabel(statement.institution, statement.accountMask)} · ${periodText(statement, dateFormat)}`}
           </p>
           {statement.status === 'failed' && statement.failureMessage && <p className="mt-0.5 text-[0.8125rem] text-critical">{statement.failureMessage}</p>}
         </div>
@@ -125,7 +140,44 @@ function StatementRow({ statement, dateFormat, selectable, selected, onToggle, o
         </div>
         <ChevronRight size={17} className="shrink-0 text-label-tertiary" aria-hidden="true" />
       </button>
-    </li>
+    </motion.li>
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <section aria-hidden="true">
+      <Skeleton className="mx-1 mb-3 h-6 w-28" />
+      <div className="card grouped overflow-hidden">
+        {Array.from({ length: 5 }, (_, i) => (
+          <div key={i} className="flex items-center gap-3.5 px-4 py-3.5 md:px-5">
+            <Skeleton className="size-10 shrink-0 rounded-xl" />
+            <span className="min-w-0 flex-1 space-y-1.5">
+              <Skeleton className="h-3.5 w-40 max-w-[60%]" />
+              <Skeleton className="h-3 w-56 max-w-[80%]" />
+            </span>
+            <Skeleton className="hidden h-6 w-20 rounded-full sm:block" />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StatementSection({ id, title, subtitle, action, children }: { id: string; title: string; subtitle?: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <motion.section aria-labelledby={id} layout="position" transition={{ type: 'spring', stiffness: 500, damping: 40 }}>
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3 px-1">
+        <div>
+          <h2 id={id} className="title-section">
+            {title}
+          </h2>
+          {subtitle && <p className="caption mt-0.5">{subtitle}</p>}
+        </div>
+        {action}
+      </div>
+      {children}
+    </motion.section>
   );
 }
 
@@ -133,23 +185,23 @@ export default function StatementsPage() {
   const statements = useStatements();
   const prefs = usePreferences();
   const jobs = useJobs();
-  const toast = useToast();
-  const client = useQueryClient();
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
   const [openId, setOpenId] = useState<string | null>(null);
   const [selection, setSelection] = useState<Set<string> | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const once = useSingleFlight();
 
-  const all = useMemo(() => statements.data ?? [], [statements.data]);
+  const all = statements.data ?? [];
+  // Alerts (statements the bank said are ready but didn't attach) have their own section and never mix with the rest.
+  const alerts = all.filter(isAlert);
+  const showAlerts = alerts.length > 0 || jobs.uploads.some((item) => item.scope.startsWith('alert:'));
   const discovered = all.filter((s) => s.status === 'discovered');
   const inProgress = all.filter((s) => s.status === 'downloading' || s.status === 'processing');
   const failed = all.filter((s) => s.status === 'failed');
   const processed = all.filter((s) => s.status === 'processed');
 
   // Statements look selected by default, except likely pay stubs and weak matches.
-  const selected = selection ?? new Set(discovered.filter((s) => s.documentKind !== 'incomeDocument' && s.detectionConfidence >= 0.6).map((s) => s.id));
+  const selected = selection ?? new Set(discovered.filter(isPreselected).map((s) => s.id));
 
-  const sync = useMutation({ mutationFn: api.syncStatements, onSuccess: ({ jobId }) => jobs.track(jobId) });
   const process = useMutation({
     mutationFn: (ids: string[]) => api.processStatements(ids),
     onSuccess: ({ jobId }) => {
@@ -157,35 +209,15 @@ export default function StatementsPage() {
       setSelection(null);
     },
   });
-  const upload = useMutation({
-    mutationFn: (file: File) => api.uploadStatement(file),
-    onSuccess: ({ jobId }) => {
-      jobs.track(jobId);
-      void client.invalidateQueries({ queryKey: keys.statements });
-    },
-  });
 
-  // Returning from Google's consent screen.
-  const gmailStatus = params.get('gmail');
-  const handled = useRef(false);
-  useEffect(() => {
-    if (!gmailStatus || handled.current) return;
-    handled.current = true;
-    const message = GMAIL_MESSAGES[gmailStatus];
-    if (message) toast(message.text, message.tone);
-    if (gmailStatus === 'connected') {
-      void client.invalidateQueries({ queryKey: keys.gmail });
-      sync.mutate();
-    }
-    setParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        next.delete('gmail');
-        return next;
-      },
-      { replace: true },
-    );
-  }, [gmailStatus, client, setParams, sync, toast]);
+  // Uploads from the header go one at a time; the server matches each to a waiting alert when it can.
+  const pageUploads = jobs.uploads.filter((item) => item.scope === PAGE_UPLOAD_SCOPE);
+  useClearWhenDone(PAGE_UPLOAD_SCOPE, pageUploads);
+  const picker = usePdfPicker((files) => void jobs.uploadFiles(files, { scope: PAGE_UPLOAD_SCOPE }));
+  const uploadDetail = (statementId: string | null) => {
+    const statement = all.find((s) => s.id === statementId);
+    return statement?.status === 'processed' ? `${statement.transactionCount} transactions` : null;
+  };
 
   function toggle(id: string) {
     const next = new Set(selected);
@@ -194,7 +226,23 @@ export default function StatementsPage() {
     setSelection(next);
   }
 
-  const busy = jobs.isActive;
+  const rows = (list: Statement[], selectable = false) => (
+    <GroupedList>
+      <AnimatePresence initial={false}>
+        {list.map((s) => (
+          <StatementRow
+            key={s.id}
+            statement={s}
+            dateFormat={prefs.dateFormat}
+            selectable={selectable}
+            selected={selectable ? selected.has(s.id) : undefined}
+            onToggle={selectable ? () => toggle(s.id) : undefined}
+            onOpen={() => setOpenId(s.id)}
+          />
+        ))}
+      </AnimatePresence>
+    </GroupedList>
+  );
 
   return (
     <div>
@@ -203,37 +251,30 @@ export default function StatementsPage() {
         subtitle="Statements found in Gmail or uploaded by you."
         actions={
           <>
-            <input
-              ref={fileInput}
-              type="file"
-              accept="application/pdf,.pdf"
-              className="sr-only"
-              tabIndex={-1}
-              aria-hidden="true"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) upload.mutate(file);
-                e.target.value = '';
-              }}
-            />
-            <Button variant={params.get('upload') ? 'primary' : 'secondary'} icon={<FileUp size={16} aria-hidden="true" />} loading={upload.isPending} onClick={() => fileInput.current?.click()}>
-              Upload PDF
+            {picker.input}
+            {/* Arriving from "Upload a PDF" elsewhere highlights this button; the file picker needs a click of its own. */}
+            <Button variant={params.get('upload') ? 'primary' : 'secondary'} icon={<FileUp size={16} aria-hidden="true" />} onClick={picker.open}>
+              Upload PDFs
             </Button>
           </>
         }
       />
 
-      {upload.isError && (
-        <p role="alert" className="mb-4 rounded-2xl bg-critical-soft px-4 py-3 text-[0.9375rem] text-critical">
-          {errorMessage(upload.error)}
-        </p>
-      )}
+      <Collapse open={pageUploads.length > 0}>
+        <Card className="mb-8 rounded-[20px] px-4 pt-3.5 pb-4 md:px-5">
+          <h2 className="eyebrow mb-2 px-1">{pageUploads.some((item) => item.state !== 'done' && item.state !== 'failed') ? 'Uploading' : 'Uploaded'}</h2>
+          <UploadProgressList
+            label="Uploaded PDFs"
+            rows={uploadRows(pageUploads, (id) => jobs.clearUploads(PAGE_UPLOAD_SCOPE, id), (item) => uploadDetail(item.statementId))}
+          />
+        </Card>
+      </Collapse>
 
       <div className="space-y-8">
         <GmailCard />
 
         {statements.isPending ? (
-          <Skeleton className="h-64 w-full rounded-[20px]" />
+          <ListSkeleton />
         ) : statements.isError ? (
           <Card>
             <ErrorState message={errorMessage(statements.error)} onRetry={() => void statements.refetch()} />
@@ -243,76 +284,56 @@ export default function StatementsPage() {
             <EmptyState
               icon={<FileText size={26} aria-hidden="true" />}
               title="No statements yet"
-              description="Scan Gmail to find your bank statements, or upload a PDF statement from your bank’s website."
-              action={
-                <Button icon={<FileUp size={16} aria-hidden="true" />} onClick={() => fileInput.current?.click()}>
-                  Upload a PDF
-                </Button>
-              }
+              description="Scan Gmail to find your bank statements, or use Upload PDF to add a statement downloaded from your bank’s website."
             />
           </Card>
         ) : (
-          <>
+          <AnimatePresence initial={false}>
+            {showAlerts && (
+              <StatementSection key="alerts" id="alerts-title" title="Waiting for you to download" subtitle="Your bank emailed that these statements are ready but didn’t attach them.">
+                <StatementAlertList statements={all} dateFormat={prefs.dateFormat} />
+              </StatementSection>
+            )}
+
             {discovered.length > 0 && (
-              <section aria-labelledby="ready-title">
-                <div className="mb-3 flex flex-wrap items-end justify-between gap-3 px-1">
-                  <div>
-                    <h2 id="ready-title" className="title-section">
-                      Ready to analyze
-                    </h2>
-                    <p className="caption mt-0.5">
-                      {discovered.length} found in Gmail. Choose which to import.
-                    </p>
-                  </div>
-                  <Button disabled={selected.size === 0 || busy} loading={process.isPending} onClick={() => process.mutate([...selected])}>
+              <StatementSection
+                key="ready"
+                id="ready-title"
+                title="Ready to analyze"
+                subtitle={`${discovered.length} found in Gmail. Choose which to import.`}
+                action={
+                  <Button disabled={selected.size === 0 || jobs.isActive} loading={process.isPending} onClick={() => void once(() => process.mutateAsync([...selected]))}>
                     Analyze {selected.size} {selected.size === 1 ? 'statement' : 'statements'}
                   </Button>
-                </div>
+                }
+              >
                 {process.isError && (
                   <p role="alert" className="mb-3 px-1 text-[0.9375rem] text-critical">
                     {errorMessage(process.error)}
                   </p>
                 )}
-                <ul className="card overflow-hidden [&>li+li]:shadow-[inset_0_0.5px_0_var(--separator)]">
-                  {discovered.map((s) => (
-                    <StatementRow key={s.id} statement={s} dateFormat={prefs.dateFormat} selectable selected={selected.has(s.id)} onToggle={() => toggle(s.id)} onOpen={() => setOpenId(s.id)} />
-                  ))}
-                </ul>
-              </section>
+                {rows(discovered, true)}
+              </StatementSection>
             )}
 
-            {(failed.length > 0 || inProgress.length > 0) && (
-              <section aria-labelledby="attention-title">
-                <h2 id="attention-title" className="title-section mb-3 px-1">
-                  {inProgress.length > 0 ? 'In progress' : 'Needs attention'}
-                </h2>
-                <ul className="card overflow-hidden [&>li+li]:shadow-[inset_0_0.5px_0_var(--separator)]">
-                  {[...inProgress, ...failed].map((s) => (
-                    <StatementRow key={s.id} statement={s} dateFormat={prefs.dateFormat} onOpen={() => setOpenId(s.id)} />
-                  ))}
-                </ul>
-              </section>
+            {inProgress.length > 0 && (
+              <StatementSection key="progress" id="progress-title" title="In progress">
+                {rows(inProgress)}
+              </StatementSection>
+            )}
+
+            {failed.length > 0 && (
+              <StatementSection key="failed" id="failed-title" title="Needs attention">
+                {rows(failed)}
+              </StatementSection>
             )}
 
             {processed.length > 0 && (
-              <section aria-labelledby="processed-title">
-                <h2 id="processed-title" className="title-section mb-3 px-1">
-                  Analyzed
-                </h2>
-                <ul className="card overflow-hidden [&>li+li]:shadow-[inset_0_0.5px_0_var(--separator)]">
-                  {processed.map((s) => (
-                    <StatementRow key={s.id} statement={s} dateFormat={prefs.dateFormat} onOpen={() => setOpenId(s.id)} />
-                  ))}
-                </ul>
-              </section>
+              <StatementSection key="processed" id="processed-title" title="Analyzed">
+                {rows(processed)}
+              </StatementSection>
             )}
-          </>
-        )}
-
-        {sync.isError && (
-          <p role="alert" className="text-[0.9375rem] text-critical">
-            {errorMessage(sync.error)}
-          </p>
+          </AnimatePresence>
         )}
       </div>
 

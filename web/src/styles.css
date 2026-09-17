@@ -1,17 +1,21 @@
 @import 'tailwindcss';
 @import '@fontsource-variable/inter';
 
+/* Short viewports (laptops at 720px tall): tighter type and spacing so full-screen layouts fit without scrolling. */
+@custom-variant short (@media (max-height: 820px));
+
 /*
-  FinSight design tokens. Neutral, typography-led surfaces in the spirit of Apple's platform apps:
-  a soft grey canvas, white grouped surfaces, hairline separators and one accent colour.
+  FinSight design tokens, in the spirit of Apple's Liquid Glass: content sits on translucent, specular
+  glass layers above a soft ambient backdrop; navigation and controls float on thicker glass.
+  --surface stays opaque because charts use it for mark rings.
   Light values live on :root; dark values are redefined for the OS setting and for an explicit choice.
 */
 :root {
   color-scheme: light;
-  --canvas: #f5f5f7;
+  --canvas: #eef1f6;
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --surface-sunken: #f2f2f4;
+  --surface-sunken: rgb(118 118 128 / 0.08);
   --glass: rgb(250 250 252 / 0.72);
   --fill: rgb(118 118 128 / 0.12);
   --fill-strong: rgb(118 118 128 / 0.2);
@@ -29,7 +33,7 @@
   --critical: #c9252c;
   --critical-soft: rgb(255 59 48 / 0.1);
   --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.04);
-  --shadow-float: 0 12px 40px rgb(0 0 0 / 0.12), 0 2px 6px rgb(0 0 0 / 0.06);
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.08), 0 4px 12px rgb(0 0 0 / 0.06);
 
   /* Chart series: validated categorical slots (CVD-safe adjacent order). */
   --series-1: #2a78d6;
@@ -42,15 +46,33 @@
   --series-neutral: #aeaeb2;
   --chart-grid: #ececef;
   --chart-axis: #8e8e93;
+
+  /* Liquid Glass materials: translucent layers over an ambient backdrop, lit by a specular rim. */
+  --ambient-1: rgb(0 122 255 / 0.2);
+  --ambient-2: rgb(52 199 190 / 0.18);
+  --ambient-3: rgb(255 138 101 / 0.16);
+  --ambient-4: rgb(175 82 222 / 0.14);
+  --mat-regular: rgb(255 255 255 / 0.6);
+  --mat-thick: rgb(255 255 255 / 0.74);
+  --mat-thin: rgb(255 255 255 / 0.46);
+  --mat-lens: rgb(255 255 255 / 0.85);
+  --rim-highlight: rgb(255 255 255 / 0.95);
+  --rim-edge: rgb(255 255 255 / 0.55);
+  --rim-shade: rgb(0 0 0 / 0.05);
+  --glass-shadow: 0 1px 2px rgb(15 23 42 / 0.03), 0 6px 20px rgb(15 23 42 / 0.04);
+  --glass-float: 0 1px 3px rgb(15 23 42 / 0.05), 0 10px 28px rgb(15 23 42 / 0.09);
+
+  /* A spring (stiffness 420, damping 30) sampled for CSS: quick, with a 2% overshoot. */
+  --ease-spring: linear(0, 0.033, 0.113, 0.218, 0.333, 0.449, 0.558, 0.656, 0.741, 0.812, 0.87, 0.916, 0.951, 0.977, 0.996, 1.008, 1.016, 1.02, 1.021, 1.021, 1.02, 1.017, 1.015, 1.013, 1.01, 1.008, 1.006, 1.004, 1.003, 1.002, 1.001, 1);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
-    --canvas: #000000;
+    --canvas: #07080c;
     --surface: #1c1c1e;
     --surface-raised: #2c2c2e;
-    --surface-sunken: #111113;
+    --surface-sunken: rgb(0 0 0 / 0.22);
     --glass: rgb(28 28 30 / 0.72);
     --fill: rgb(118 118 128 / 0.24);
     --fill-strong: rgb(118 118 128 / 0.36);
@@ -68,7 +90,7 @@
     --critical: #ff453a;
     --critical-soft: rgb(255 69 58 / 0.16);
     --shadow-soft: 0 0 0 1px rgb(255 255 255 / 0.04);
-    --shadow-float: 0 16px 48px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.06);
+    --shadow-float: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 1px rgb(255 255 255 / 0.06);
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
@@ -79,15 +101,28 @@
     --series-neutral: #636366;
     --chart-grid: #2c2c2e;
     --chart-axis: #8e8e93;
+    --ambient-1: rgb(10 132 255 / 0.32);
+    --ambient-2: rgb(48 176 199 / 0.18);
+    --ambient-3: rgb(255 105 97 / 0.12);
+    --ambient-4: rgb(140 82 255 / 0.28);
+    --mat-regular: rgb(44 44 50 / 0.52);
+    --mat-thick: rgb(30 30 36 / 0.72);
+    --mat-thin: rgb(90 90 100 / 0.24);
+    --mat-lens: rgb(255 255 255 / 0.14);
+    --rim-highlight: rgb(255 255 255 / 0.24);
+    --rim-edge: rgb(255 255 255 / 0.09);
+    --rim-shade: rgb(0 0 0 / 0.3);
+    --glass-shadow: 0 1px 2px rgb(0 0 0 / 0.24), 0 8px 24px rgb(0 0 0 / 0.18);
+    --glass-float: 0 1px 3px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.34);
   }
 }
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --canvas: #000000;
+  --canvas: #07080c;
   --surface: #1c1c1e;
   --surface-raised: #2c2c2e;
-  --surface-sunken: #111113;
+  --surface-sunken: rgb(0 0 0 / 0.22);
   --glass: rgb(28 28 30 / 0.72);
   --fill: rgb(118 118 128 / 0.24);
   --fill-strong: rgb(118 118 128 / 0.36);
@@ -105,7 +140,7 @@
   --critical: #ff453a;
   --critical-soft: rgb(255 69 58 / 0.16);
   --shadow-soft: 0 0 0 1px rgb(255 255 255 / 0.04);
-  --shadow-float: 0 16px 48px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.06);
+  --shadow-float: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 1px rgb(255 255 255 / 0.06);
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
@@ -116,6 +151,32 @@
   --series-neutral: #636366;
   --chart-grid: #2c2c2e;
   --chart-axis: #8e8e93;
+  --ambient-1: rgb(10 132 255 / 0.32);
+  --ambient-2: rgb(48 176 199 / 0.18);
+  --ambient-3: rgb(255 105 97 / 0.12);
+  --ambient-4: rgb(140 82 255 / 0.28);
+  --mat-regular: rgb(44 44 50 / 0.52);
+  --mat-thick: rgb(30 30 36 / 0.72);
+  --mat-thin: rgb(90 90 100 / 0.24);
+  --mat-lens: rgb(255 255 255 / 0.14);
+  --rim-highlight: rgb(255 255 255 / 0.24);
+  --rim-edge: rgb(255 255 255 / 0.09);
+  --rim-shade: rgb(0 0 0 / 0.3);
+  --glass-shadow: 0 1px 2px rgb(0 0 0 / 0.24), 0 8px 24px rgb(0 0 0 / 0.18);
+  --glass-float: 0 1px 3px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.34);
+}
+
+/* Registered so the primary button's hover sheen and pressed shade animate (a CSS filter would force a GPU layer). */
+@property --sheen {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0.1;
+}
+
+@property --shade {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
 }
 
 @theme inline {
@@ -189,6 +250,13 @@
     line-height: 1.1;
   }
 
+  /* The welcome headline scales with the viewport's width and height, so it never pushes content below the fold. */
+  .welcome-title {
+    font-size: clamp(2.5rem, min(4.6vw, 7.2vh), 3.5rem);
+    line-height: 1.04;
+    text-wrap: balance;
+  }
+
   .title-section {
     font-size: 1.25rem;
     font-weight: 650;
@@ -221,20 +289,209 @@
     color: var(--label-secondary);
   }
 
+  /*
+    Glass materials. Each layers a tinted translucent fill, a backdrop blur that picks up the ambient colour,
+    and a specular rim: a bright top highlight plus a faint edge, so panes read as lit glass rather than flat cards.
+
+    In-page materials put the blur on ::before (behind the content) and the rim on ::after (above it), not on
+    the element itself. If the element carried backdrop-filter, any child the GPU composites separately (a pressed button,
+    a moving selection lens, a fading row) would render as a light rectangle over the glass in Chrome.
+    Fields (inputs can't have pseudo-elements) carry their blur and rim directly; they have no children.
+  */
+  :is(.card, .glass-strong, .glass-control):not(input, textarea) {
+    position: relative;
+    isolation: isolate;
+  }
+
+  :is(.card, .glass-strong, .glass-control):not(input, textarea)::before,
+  :is(.card, .glass-strong, .glass-control):not(input, textarea)::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+  }
+
+  :is(.card, .glass-strong, .glass-control)::before {
+    z-index: -1;
+    backdrop-filter: var(--material-blur);
+    -webkit-backdrop-filter: var(--material-blur);
+  }
+
+  :is(.card, .glass-strong, .glass-control)::after {
+    box-shadow:
+      inset 0 1px 0 var(--rim-highlight),
+      inset 0 0 0 1px var(--rim-edge),
+      inset 0 -1px 0 var(--material-rim-shade, transparent);
+  }
+
   .card {
-    background: var(--surface);
+    --material-blur: blur(28px) saturate(170%);
+    --material-rim-shade: var(--rim-shade);
+    background: var(--mat-regular);
     border-radius: var(--radius-card);
-    box-shadow: var(--shadow-soft);
+    box-shadow: var(--glass-shadow);
   }
 
+  /*
+    Floating layers: popovers, toasts, progress, alerts, sheets. Thicker so text stays legible over anything.
+    These fade in and out as a whole, and an element's own opacity cuts off a blur held by its pseudo-element,
+    so floating glass keeps backdrop-filter on itself (which stays blurred while it fades).
+  */
   .glass {
-    background: var(--glass);
-    backdrop-filter: saturate(180%) blur(20px);
-    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    --material-blur: blur(40px) saturate(190%);
+    background: var(--mat-thick);
+    box-shadow:
+      inset 0 1px 0 var(--rim-highlight),
+      inset 0 0 0 1px var(--rim-edge),
+      var(--glass-float);
+    backdrop-filter: var(--material-blur);
+    -webkit-backdrop-filter: var(--material-blur);
   }
 
-  .hairline-b {
-    box-shadow: inset 0 -0.5px 0 var(--separator);
+  /* Thin glass for controls that sit on content: secondary buttons, fields, the period menu button. */
+  .glass-control {
+    --material-blur: blur(16px) saturate(180%);
+    background: var(--mat-thin);
+    box-shadow: 0 0.5px 1px rgb(0 0 0 / 0.05);
+  }
+
+  /*
+    Glass nested in glass (fields on a sheet, buttons in an alert, rows in a card) shows the pane it sits on,
+    as it did when the outer pane's own backdrop-filter isolated it. Blurring an even pane changes nothing
+    visible, so nested materials skip the blur entirely.
+  */
+  :is(.card, .glass, .glass-strong) :is(.card, .glass, .glass-strong, .glass-control) {
+    --material-blur: none;
+  }
+
+  :is(input, textarea).glass-control {
+    backdrop-filter: var(--material-blur);
+    -webkit-backdrop-filter: var(--material-blur);
+    box-shadow:
+      inset 0 1px 0 var(--rim-highlight),
+      inset 0 0 0 1px var(--rim-edge),
+      0 0.5px 1px rgb(0 0 0 / 0.05);
+  }
+
+  /* The moving lens behind a selected tab, segment or sidebar item. */
+  .glass-lens {
+    background: var(--mat-lens);
+    box-shadow:
+      inset 0 1px 0 var(--rim-highlight),
+      inset 0 0 0 0.5px var(--rim-edge),
+      0 1px 2px rgb(0 0 0 / 0.06);
+  }
+
+  /*
+    The prominent (primary) button, as on iOS 26 and macOS Tahoe: a flat accent tint with a faint top specular
+    line and a hairline neutral contact shadow. No coloured shadow or glow. Hover lifts the sheen slightly;
+    pressing deepens the tint. Disabled turns neutral grey rather than a washed-out blue.
+  */
+  .glass-tint {
+    background:
+      linear-gradient(180deg, rgb(255 255 255 / var(--sheen)), rgb(255 255 255 / 0) 60%),
+      linear-gradient(rgb(0 0 0 / var(--shade)), rgb(0 0 0 / var(--shade))),
+      var(--accent);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.18),
+      0 1px 2px rgb(0 0 0 / 0.08);
+  }
+
+  .glass-tint:disabled {
+    background: var(--fill-strong);
+    box-shadow: none;
+  }
+
+  /* Buttons press down with a little spring; the primary tint brightens on hover and deepens when pressed. */
+  .button {
+    transition:
+      --sheen 0.2s ease,
+      --shade 0.12s ease,
+      background-color 0.2s ease,
+      opacity 0.2s ease,
+      transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .button:active:not(:disabled) {
+    transform: scale(0.96);
+  }
+
+  .glass-tint:hover:not(:disabled) {
+    --sheen: 0.18;
+  }
+
+  .glass-tint:active:not(:disabled) {
+    --shade: 0.12;
+  }
+
+  /*
+    The selection lens behind the active nav item or segment. One element slides between items (see
+    useSlidingIndicator) on a slightly underdamped spring, so it settles like liquid.
+  */
+  .sliding-lens {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    transition:
+      transform 0.3s var(--ease-spring),
+      width 0.3s var(--ease-spring),
+      height 0.3s var(--ease-spring),
+      opacity 0.2s ease;
+  }
+
+  .sliding-lens[data-animate='false'] {
+    transition: none;
+  }
+
+  /* Ambient backdrop: soft light that the glass refracts. Fixed so panes appear to move over it. */
+  .ambient {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(40vmax 40vmax at 8% 4%, var(--ambient-1), transparent 70%),
+      radial-gradient(36vmax 36vmax at 96% 18%, var(--ambient-2), transparent 70%),
+      radial-gradient(42vmax 42vmax at 78% 100%, var(--ambient-3), transparent 70%),
+      radial-gradient(38vmax 38vmax at 10% 88%, var(--ambient-4), transparent 70%);
+  }
+
+  /* Rows inside one grouped surface, separated by hairlines (iOS Settings style). */
+  .grouped > * + * {
+    box-shadow: inset 0 0.5px 0 var(--separator);
+  }
+
+  /* Content that replaces a skeleton inside a card fades in, so loading reads as a crossfade, not a pop. */
+  .fade-in {
+    animation: fade-in 0.28s ease-out;
+  }
+
+  /*
+    Page changes and pending refetches fade or dim only what isn't glass: text, charts and rows inside cards,
+    and loose headings between them. Opacity on anything that contains a glass surface (a card or a glass
+    control) makes it a backdrop root, and the glass renders flat and milky until the effect ends. The selectors
+    reach the outermost pieces that contain no glass, so nothing is dimmed twice.
+  */
+  .page-enter > :not(.card, .glass-control, :has(.card, .glass-control)),
+  .page-enter :is(.card, .glass-control, :has(.card, .glass-control)) > :not(.card, .glass-control, :has(.card, .glass-control)) {
+    animation: fade-in 0.24s ease-out;
+  }
+
+  [data-pending] > :not(.card, .glass-control, :has(.card, .glass-control)),
+  [data-pending] :is(.card, .glass-control, :has(.card, .glass-control)) > :not(.card, .glass-control, :has(.card, .glass-control)) {
+    transition: opacity 0.2s ease;
+  }
+
+  [data-pending='true'] > :not(.card, .glass-control, :has(.card, .glass-control)),
+  [data-pending='true'] :is(.card, .glass-control, :has(.card, .glass-control)) > :not(.card, .glass-control, :has(.card, .glass-control)) {
+    opacity: 0.55;
+  }
+
+  /* The launch mark only appears if the session check is slow, so fast starts don't flash it. */
+  .launch-mark {
+    animation: fade-in 0.4s ease-out 0.3s both;
   }
 
   .tabular {
@@ -245,38 +502,106 @@
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
-  *::after {
+  *::after,
+  ::backdrop {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
 }
 
-/* Sheet entrance: from the right on wide screens, from the bottom on phones. */
-dialog.sheet[open] > div {
-  animation: sheet-up 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+/*
+  Sheets, alerts and pop-up menus animate in and out. Each stays in the top layer while closing
+  (`overlay` and `display` with allow-discrete) until its panel has finished, and @starting-style gives the
+  entry its first frame. Browsers without these features simply open and close instantly.
+*/
+dialog.sheet,
+dialog.alert-dialog {
+  transition:
+    display 0.32s allow-discrete,
+    overlay 0.32s allow-discrete;
 }
 
-dialog.sheet[open]::backdrop {
-  animation: fade-in 0.2s ease-out;
+dialog.sheet::backdrop,
+dialog.alert-dialog::backdrop {
+  opacity: 0;
+  transition:
+    opacity 0.24s ease,
+    display 0.32s allow-discrete,
+    overlay 0.32s allow-discrete;
 }
 
-@media (min-width: 768px) {
-  dialog.sheet[open] > div {
-    animation-name: sheet-in;
+dialog.sheet[open]::backdrop,
+dialog.alert-dialog[open]::backdrop {
+  opacity: 1;
+}
+
+@starting-style {
+  dialog.sheet[open]::backdrop,
+  dialog.alert-dialog[open]::backdrop {
+    opacity: 0;
   }
 }
 
-@keyframes sheet-up {
-  from {
+/* Sheets rise from the bottom on phones and glide in from the right on wide screens. */
+.sheet-panel {
+  transform: translateY(100%);
+  transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+dialog[open] > .sheet-panel {
+  transform: none;
+}
+
+@starting-style {
+  dialog[open] > .sheet-panel {
     transform: translateY(100%);
   }
 }
 
-@keyframes sheet-in {
-  from {
-    transform: translateX(24px);
+@media (min-width: 768px) {
+  .sheet-panel {
     opacity: 0;
+    transform: translateX(32px);
+    transition:
+      transform 0.32s cubic-bezier(0.32, 0.72, 0, 1),
+      opacity 0.22s ease;
+  }
+
+  dialog[open] > .sheet-panel {
+    opacity: 1;
+    transform: none;
+  }
+
+  @starting-style {
+    dialog[open] > .sheet-panel {
+      opacity: 0;
+      transform: translateX(32px);
+    }
+  }
+}
+
+/* Alerts pop in from slightly larger, as on iOS, and settle out by shrinking a touch as they fade. */
+.alert-panel {
+  opacity: 0;
+  transform: scale(0.96);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+dialog[open] > .alert-panel {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.22s ease-out,
+    transform 0.3s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@starting-style {
+  dialog[open] > .alert-panel {
+    opacity: 0;
+    transform: scale(1.08);
   }
 }
 
@@ -287,19 +612,122 @@ dialog.sheet[open]::backdrop {
 }
 
 @layer components {
-  /* Denser glass for bars that content scrolls under, so labels stay legible without backdrop blur. */
+  /* Navigation glass: the floating sidebar and tab bar that content scrolls beneath. */
   .glass-strong {
-    background: color-mix(in srgb, var(--canvas) 94%, transparent);
-    backdrop-filter: saturate(180%) blur(20px);
-    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    --material-blur: blur(36px) saturate(200%);
+    background: var(--mat-thick);
+    box-shadow: var(--glass-float);
+  }
+}
+
+/*
+  Accessibility: honour Reduce Transparency and Increase Contrast by making every material opaque with a
+  visible edge, and fall back to near-opaque fills where backdrop blur isn't supported.
+*/
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .card,
+  .glass,
+  .glass-strong,
+  .glass-control,
+  .popup-menu {
+    --material-blur: none;
+    background: var(--surface);
+    box-shadow: none;
   }
 
-  /* Native selects keep platform behaviour; this adds the disclosure chevron appearance-none removes. */
-  select {
-    appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238e8e93' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 9 5 5 5-5'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 0.7rem center;
-    padding-right: 2rem !important;
+  :is(.card, .glass-strong, .glass-control, .popup-menu)::after,
+  :is(input, textarea).glass-control,
+  .glass,
+  .popup-menu {
+    box-shadow: inset 0 0 0 1px var(--separator);
+  }
+
+  .glass-lens {
+    background: var(--fill-strong);
+  }
+
+  .ambient {
+    display: none;
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .card,
+  .glass,
+  .glass-strong,
+  .glass-control {
+    background: color-mix(in srgb, var(--surface) 96%, transparent);
+  }
+}
+
+@layer components {
+
+  /* Scroll edge: content blurs and fades as it passes under a sticky bar, instead of a hard divider. */
+  .scroll-edge::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 -0.75rem;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(color-mix(in srgb, var(--canvas) 70%, transparent), transparent);
+    backdrop-filter: blur(14px) saturate(180%);
+    -webkit-backdrop-filter: blur(14px) saturate(180%);
+    mask-image: linear-gradient(#000 55%, transparent);
+  }
+
+  @media (min-width: 1024px) {
+    .scroll-edge::before {
+      content: none;
+    }
+  }
+
+  /* Pop-up menus live in the top layer; reset the UA popover box. They scale in quickly and fade out, like AppKit menus. */
+  .popup-menu {
+    inset: auto;
+    border: 0;
+    width: max-content;
+    max-width: calc(100vw - 24px);
+    overflow: hidden auto;
+    background: var(--mat-thick);
+    box-shadow:
+      inset 0 1px 0 var(--rim-highlight),
+      inset 0 0 0 1px var(--rim-edge),
+      var(--glass-float);
+    backdrop-filter: blur(40px) saturate(190%);
+    -webkit-backdrop-filter: blur(40px) saturate(190%);
+  }
+
+  .popup-menu {
+    opacity: 0;
+    transform: scale(0.97);
+    transition:
+      opacity 0.14s ease-in,
+      transform 0.14s ease-in,
+      overlay 0.14s allow-discrete,
+      display 0.14s allow-discrete;
+  }
+
+  .popup-menu:not(:popover-open) {
+    pointer-events: none;
+  }
+
+  .popup-menu:popover-open {
+    opacity: 1;
+    transform: none;
+    transition-duration: 0.18s;
+    transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  @starting-style {
+    .popup-menu:popover-open {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+  }
+
+  /* Thin, overlay-style scrollbars instead of the platform's chunky default. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--label) 28%, transparent) transparent;
   }
 }
