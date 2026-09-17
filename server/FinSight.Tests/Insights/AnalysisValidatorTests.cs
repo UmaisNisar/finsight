@@ -93,6 +93,21 @@ public class AnalysisValidatorTests
         result.Corrections.Should().ContainSingle(c => c.Message.Contains("$9,999"));
     }
 
+    [Theory]
+    [InlineData("Rs 9,999")]
+    [InlineData("Rs. 9,999")]
+    [InlineData("₨9,999")]
+    [InlineData("A$9,999")]
+    [InlineData("PKR 9,999")]
+    public void Flags_unmatched_figures_in_australian_dollars_and_rupees(string figure)
+    {
+        var raw = new RawAnalysis { Summary = $"You spent $4,180 but also {figure} on something." };
+
+        var result = AnalysisValidator.Validate(raw, Facts());
+
+        result.Corrections.Should().ContainSingle(c => c.Message.Contains("9,999"));
+    }
+
     [Fact]
     public void Validates_ai_merchant_categorization_against_the_taxonomy()
     {

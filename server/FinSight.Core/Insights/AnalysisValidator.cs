@@ -18,7 +18,7 @@ public static partial class AnalysisValidator
     private const int MaxSummaryLength = 900;
     private const int MaxTextLength = 600;
 
-    [GeneratedRegex(@"(?:[$€£]\s?|\b(?:CAD|USD|EUR|GBP)\s?)(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?")]
+    [GeneratedRegex(@"(?:(?:A\$|[$€£₨])\s?|\bRs\.?\s?|\b(?:CAD|USD|EUR|GBP|AUD|PKR)\s?)(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?")]
     private static partial Regex CurrencyFigure();
 
     public static ValidatedAnalysis Validate(RawAnalysis raw, FinancialFacts facts)

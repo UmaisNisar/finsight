@@ -8,12 +8,15 @@ using FinSight.Infrastructure.Gmail;
 using FinSight.Infrastructure.Persistence;
 using FinSight.Infrastructure.Pipeline;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace FinSight.Api.Controllers;
 
+// Also enforced by the fallback policy; explicit so every endpoint here visibly requires a signed-in user.
+[Authorize]
 [ApiController]
 [Route("api")]
 public sealed class AccountController(FinSightDbContext db) : ControllerBase
@@ -29,7 +32,7 @@ public sealed class AccountController(FinSightDbContext db) : ControllerBase
     {
         if (!Currencies.IsSupported(request.Currency))
         {
-            return ApiErrors.BadRequest("invalid_currency", "Choose CAD, USD, EUR or GBP.");
+            return ApiErrors.BadRequest("invalid_currency", $"Choose one of {string.Join(", ", Currencies.Supported)}.");
         }
 
         if (!DateFormats.Contains(request.DateFormat))

@@ -7,6 +7,8 @@ describe('formatMoney', () => {
   it('formats with a narrow currency symbol and whole units for headlines', () => {
     expect(formatMoney(6200, 'CAD', { whole: true })).toMatch(/^\$6,200$/);
     expect(formatMoney(-22.99, 'USD')).toMatch(/^−\$22\.99$/);
+    expect(formatMoney(1540.5, 'AUD')).toMatch(/^\$1,540\.50$/);
+    expect(formatMoney(85_000, 'PKR', { whole: true })).toMatch(/^Rs\s?85,000$/);
   });
 
   it('shows an explicit plus sign for money in when asked, and no sign for zero', () => {

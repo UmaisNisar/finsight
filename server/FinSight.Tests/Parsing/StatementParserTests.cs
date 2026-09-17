@@ -183,4 +183,15 @@ public class StatementParserTests
         result.Transactions[0].Description.Should().NotContain("4520123412341234").And.Contain("••••1234");
         result.Transactions[1].Description.Should().NotContain("00012345678").And.Contain("••••5678");
     }
+
+    [Theory]
+    [InlineData("Statement of account. All amounts in AUD. Closing balance A$1,204.50", "AUD")]
+    [InlineData("Australian dollars. Opening balance A$980.00", "AUD")]
+    [InlineData("Account statement (PKR). Opening balance Rs. 85,000. Closing balance Rs. 91,250", "PKR")]
+    [InlineData("Pakistani Rupees statement. Amount ₨ 12,500", "PKR")]
+    [InlineData("Opening balance $1,204.50. Closing balance $980.00", "CAD")]
+    public void Detects_australian_dollar_and_pakistani_rupee_statements(string text, string expected)
+    {
+        StatementMetadataExtractor.DetectCurrency(text, "CAD").Should().Be(expected);
+    }
 }

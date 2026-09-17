@@ -7,6 +7,8 @@ export const CURRENCY_OPTIONS = [
   { value: 'USD', label: 'USD' },
   { value: 'EUR', label: 'EUR' },
   { value: 'GBP', label: 'GBP' },
+  { value: 'AUD', label: 'AUD' },
+  { value: 'PKR', label: 'PKR' },
 ];
 
 /** Date formats, each labelled with a sample date written that way. */

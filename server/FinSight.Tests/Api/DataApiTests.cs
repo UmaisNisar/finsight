@@ -350,6 +350,12 @@ public sealed class AccountApiTests(FinSightApiFactory factory) : IClassFixture<
         (await (await client.GetAsync("/api/settings")).JsonAsync()).GetProperty("theme").GetString().Should().Be("dark");
         (await (await client.GetAsync("/api/summary?period=last-month")).JsonAsync()).GetProperty("currency").GetString().Should().Be("EUR");
 
+        foreach (var code in new[] { "AUD", "PKR" })
+        {
+            var accepted = await (await client.PutAsJsonAsync("/api/settings", new { currency = code.ToLowerInvariant(), dateFormat = "dd/MM/yyyy", theme = "dark" })).JsonAsync();
+            accepted.GetProperty("currency").GetString().Should().Be(code);
+        }
+
         var badCurrency = await client.PutAsJsonAsync("/api/settings", new { currency = "BTC", dateFormat = "dd/MM/yyyy", theme = "dark" });
         (await badCurrency.ErrorCodeAsync()).Should().Be("invalid_currency");
         var badFormat = await client.PutAsJsonAsync("/api/settings", new { currency = "USD", dateFormat = "yyyy", theme = "dark" });

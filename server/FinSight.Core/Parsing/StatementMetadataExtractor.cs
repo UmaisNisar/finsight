@@ -96,6 +96,8 @@ internal static partial class StatementMetadataExtractor
             ["USD"] = Regex.Count(text, @"\bUSD\b|US\$|\bU\.S\. DOLLARS?\b", RegexOptions.IgnoreCase),
             ["EUR"] = Regex.Count(text, @"€|\bEUR\b|\bEUROS?\b", RegexOptions.IgnoreCase),
             ["GBP"] = Regex.Count(text, @"£|\bGBP\b|\bPOUNDS STERLING\b", RegexOptions.IgnoreCase),
+            ["AUD"] = Regex.Count(text, @"\bAUD\b|A\$|\bAUSTRALIAN DOLLARS?\b", RegexOptions.IgnoreCase),
+            ["PKR"] = Regex.Count(text, @"\bPKR\b|₨|\bRs\.|\bPAKISTANI RUPEES?\b", RegexOptions.IgnoreCase),
         };
 
         // Foreign-currency purchases mention other currencies, so the user's default wins ties and
