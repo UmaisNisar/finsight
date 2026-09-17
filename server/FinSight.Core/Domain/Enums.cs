@@ -7,6 +7,12 @@ public enum StatementStatus
     Processing,
     Processed,
     Failed,
+
+    /// <summary>An email said a statement is ready but attached no PDF. The user downloads it from the bank and uploads it.</summary>
+    AwaitingUpload,
+
+    /// <summary>A statement alert the user dismissed, or one an upload fulfilled. Hidden, and kept so a rescan never recreates it.</summary>
+    Dismissed,
 }
 
 public enum StatementSourceKind

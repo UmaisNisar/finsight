@@ -33,7 +33,8 @@ public sealed record GeminiAnalysisResult(ValidatedAnalysis Result, string Model
 /// <summary>The single entry point to the AI model. No other code calls Gemini.</summary>
 public interface IGeminiService
 {
-    bool IsConfigured { get; }
+    /// <summary>Whether a key is available for the current user: their own Gemini key, or the server's.</summary>
+    Task<bool> IsConfiguredAsync(CancellationToken cancellationToken);
 
     Task<IReadOnlyList<MerchantCategorization>> CategorizeTransactionsAsync(IReadOnlyList<MerchantCategorizationRequest> merchants, CancellationToken cancellationToken);
 

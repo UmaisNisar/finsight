@@ -4,6 +4,7 @@ using FinSight.Core.Abstractions;
 using FinSight.Core.Domain;
 using FinSight.Core.Normalization;
 using FinSight.Core.Parsing;
+using FinSight.Core.Statements;
 using FinSight.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -29,6 +30,9 @@ public sealed class StatementImportService(
     CategorizationService categorization,
     TimeProvider time)
 {
+    /// <summary>Recorded on a statement alert cleared by an upload.</summary>
+    public const string FulfilledByUploadNote = "Fulfilled by an uploaded statement.";
+
     public static string HashOf(ReadOnlySpan<byte> bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
     public async Task<ImportResult> ImportAsync(Statement statement, byte[] pdf, string defaultCurrency, CancellationToken cancellationToken)
@@ -77,7 +81,7 @@ public sealed class StatementImportService(
         var parsed = StatementParser.Parse(text, new StatementParseContext(
             statement.Currency ?? defaultCurrency,
             referenceDate,
-            statement.Sender is null ? null : Core.Statements.StatementEmailClassifier.ExtractAddress(statement.Sender),
+            statement.Sender is null ? null : StatementEmailClassifier.ExtractAddress(statement.Sender),
             statement.Subject));
 
         if (parsed.Failure != ParseFailure.None)
@@ -88,8 +92,9 @@ public sealed class StatementImportService(
 
         var metadata = parsed.Metadata;
         statement.Institution = metadata.Institution ?? statement.Institution;
-        statement.AccountType = metadata.AccountType;
-        statement.AccountMask = metadata.AccountMask;
+        // A statement alert already knows the account from its email; keep that when the PDF doesn't say.
+        statement.AccountType = metadata.AccountType != AccountType.Unknown ? metadata.AccountType : statement.AccountType;
+        statement.AccountMask = metadata.AccountMask ?? statement.AccountMask;
         statement.Currency = metadata.Currency;
         statement.PeriodStart = metadata.PeriodStart;
         statement.PeriodEnd = metadata.PeriodEnd;
@@ -173,9 +178,41 @@ public sealed class StatementImportService(
         statement.UpdatedAt = now;
 
         await db.SaveChangesAsync(cancellationToken);
+
+        // Re-importing replaced this statement's transactions, so transfers matched against the old rows are released;
+        // the job's transfer matching pairs them again with the new rows.
+        await categorization.ReleaseOrphanedTransfersAsync(cancellationToken);
         await dbTransaction.CommitAsync(cancellationToken);
 
         return new ImportResult(ImportOutcome.Imported, created.Count, skipped, null);
+    }
+
+    /// <summary>
+    /// Marks the statement alert that <paramref name="imported"/> answers as done, so it stops asking for an upload.
+    /// The alert row is kept (as dismissed) so a Gmail rescan never recreates it. Returns the alert, or null if none matched.
+    /// </summary>
+    public async Task<Statement?> FulfilAlertAsync(Statement imported, CancellationToken cancellationToken)
+    {
+        if (imported.PeriodEnd is null || string.IsNullOrWhiteSpace(imported.Institution))
+        {
+            return null;
+        }
+
+        var awaiting = await db.Statements
+            .Where(s => s.Id != imported.Id && s.Source == StatementSourceKind.Gmail && s.Status == StatementStatus.AwaitingUpload)
+            .ToListAsync(cancellationToken);
+
+        var alert = StatementAlertMatching.Closest(awaiting.Where(StatementAlert.IsAlert), imported);
+        if (alert is null)
+        {
+            return null;
+        }
+
+        alert.Status = StatementStatus.Dismissed;
+        alert.ExtractionWarnings = JsonSerializer.Serialize(new[] { FulfilledByUploadNote });
+        alert.UpdatedAt = time.GetUtcNow();
+        await db.SaveChangesAsync(cancellationToken);
+        return alert;
     }
 
     public async Task<ImportResult> FailAsync(Statement statement, string code, CancellationToken cancellationToken)

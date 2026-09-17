@@ -76,7 +76,7 @@ public sealed class InsightsController(FinSightDbContext db, DashboardService da
         var reviewed = false;
         var expenses = series.Where(s => !s.IsIncome).ToList();
 
-        if (settings.AiCategorizationEnabled && gemini.IsConfigured && expenses.Count > 0)
+        if (settings.AiCategorizationEnabled && expenses.Count > 0 && await gemini.IsConfiguredAsync(cancellationToken))
         {
             var requests = expenses.Select((s, i) => new RecurringReviewRequest($"R{i + 1}", s.Merchant, resolve(s.CategoryId).Name, s.TypicalAmount,
                 s.Frequency.ToString().ToLowerInvariant(), s.Occurrences, s.AmountVaries)).ToList();
@@ -92,8 +92,8 @@ public sealed class InsightsController(FinSightDbContext db, DashboardService da
 
                 foreach (var review in result)
                 {
-                    var index = int.Parse(review.Ref.AsSpan(1), System.Globalization.CultureInfo.InvariantCulture) - 1;
-                    if (index >= 0 && index < expenses.Count)
+                    if (int.TryParse(review.Ref.AsSpan(1), System.Globalization.CultureInfo.InvariantCulture, out var number)
+                        && number - 1 is var index && index >= 0 && index < expenses.Count)
                     {
                         reviews[expenses[index].MerchantKey] = review;
                     }
@@ -127,7 +127,7 @@ public sealed class InsightsController(FinSightDbContext db, DashboardService da
     {
         var settings = (await db.Users.AsNoTracking().SingleAsync(cancellationToken)).Settings;
         return new AnalysisResponse(period, stored.State, stored.Analysis, stored.Corrections, stored.Model, stored.GeneratedAt,
-            new AnalysisAvailability(settings.AiInsightsEnabled, gemini.IsConfigured), settings.Currency);
+            new AnalysisAvailability(settings.AiInsightsEnabled, await gemini.IsConfiguredAsync(cancellationToken)), settings.Currency);
     }
 
     private static RecurringDto ToDto(RecurringSeries s, Func<string, CategoryDefinition> resolve, RecurringReview? review)

@@ -19,15 +19,25 @@ public interface ITokenProtector
     string? TryUnprotect(string ciphertext);
 }
 
+/// <summary>Protects users' own AI provider keys. A separate purpose from OAuth tokens and data fields.</summary>
+public interface IApiKeyProtector
+{
+    string Protect(string apiKey);
+
+    /// <returns>The key, or null if it can no longer be decrypted (for example after key loss).</returns>
+    string? TryUnprotect(string ciphertext);
+}
+
 /// <summary>
 /// ASP.NET Core Data Protection (AES-256-CBC + HMACSHA256, automatic key rotation). Separate
 /// purposes isolate tokens from other fields: a key compromise of one purpose does not expose the other.
 /// </summary>
-internal sealed class DataProtectionFieldProtector(IDataProtectionProvider provider) : IFieldProtector, ITokenProtector
+internal sealed class DataProtectionFieldProtector(IDataProtectionProvider provider) : IFieldProtector, ITokenProtector, IApiKeyProtector
 {
     private const string Marker = "enc:";
     private readonly IDataProtector _fields = provider.CreateProtector("FinSight.Fields.v1");
     private readonly IDataProtector _tokens = provider.CreateProtector("FinSight.OAuthTokens.v1");
+    private readonly IDataProtector _apiKeys = provider.CreateProtector("FinSight.GeminiApiKey.v1");
 
     public string Protect(string plaintext) => Marker + _fields.Protect(plaintext);
 
@@ -55,6 +65,20 @@ internal sealed class DataProtectionFieldProtector(IDataProtectionProvider provi
         try
         {
             return _tokens.Unprotect(ciphertext);
+        }
+        catch (CryptographicException)
+        {
+            return null;
+        }
+    }
+
+    string IApiKeyProtector.Protect(string apiKey) => _apiKeys.Protect(apiKey);
+
+    string? IApiKeyProtector.TryUnprotect(string ciphertext)
+    {
+        try
+        {
+            return _apiKeys.Unprotect(ciphertext);
         }
         catch (CryptographicException)
         {

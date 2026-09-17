@@ -39,6 +39,7 @@ public static class DependencyInjection
         services.AddSingleton<DataProtectionFieldProtector>();
         services.AddSingleton<IFieldProtector>(sp => sp.GetRequiredService<DataProtectionFieldProtector>());
         services.AddSingleton<ITokenProtector>(sp => sp.GetRequiredService<DataProtectionFieldProtector>());
+        services.AddSingleton<IApiKeyProtector>(sp => sp.GetRequiredService<DataProtectionFieldProtector>());
 
         services.AddScoped<UserContext>();
         services.AddScoped<IUserContext>(sp => sp.GetRequiredService<UserContext>());
@@ -51,6 +52,8 @@ public static class DependencyInjection
         services.AddHttpClient<GoogleTokenService>(c => c.Timeout = TimeSpan.FromSeconds(20));
         services.AddHttpClient<IGmailClient, GmailApiClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
         services.AddHttpClient<GeminiClient>(c => c.Timeout = Timeout.InfiniteTimeSpan);
+        services.AddHttpClient<GeminiKeyValidator>(c => c.Timeout = TimeSpan.FromSeconds(15));
+        services.AddScoped<IGeminiKeyResolver, GeminiKeyResolver>();
         services.AddScoped<IGeminiService, GeminiService>();
 
         services.AddSingleton<JobQueue>();

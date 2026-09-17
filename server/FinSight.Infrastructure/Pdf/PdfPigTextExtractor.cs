@@ -55,8 +55,9 @@ public sealed class PdfPigTextExtractor : IPdfTextExtractor
         {
             throw new PdfPasswordRequiredException("The PDF is password protected.", ex);
         }
-        catch (Exception ex) when (ex is PdfDocumentFormatException or InvalidOperationException or ArgumentException or IndexOutOfRangeException or NullReferenceException)
+        catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException or PdfPasswordRequiredException))
         {
+            // PdfPig throws many exception types for malformed files; any of them means "not a readable PDF".
             throw new PdfUnreadableException("The PDF could not be read.", ex);
         }
     }

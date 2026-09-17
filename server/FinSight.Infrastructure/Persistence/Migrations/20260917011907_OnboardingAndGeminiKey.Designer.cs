@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using FinSight.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace FinSight.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(FinSightDbContext))]
-    partial class FinSightDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260917011907_OnboardingAndGeminiKey")]
+    partial class OnboardingAndGeminiKey
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.12");

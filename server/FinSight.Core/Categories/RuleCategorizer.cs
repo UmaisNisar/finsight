@@ -88,7 +88,10 @@ public static partial class RuleCategorizer
         var description = input.Description;
         var inflow = input.Amount > 0;
 
-        if (merchantRules is not null && merchantRules.TryGetValue(input.MerchantKey, out var rule))
+        // A merchant rule describes one kind of money movement: an income rule ("Acme pays my salary") says nothing
+        // about money going out to the same merchant, so it only applies to money coming in.
+        if (merchantRules is not null && merchantRules.TryGetValue(input.MerchantKey, out var rule)
+            && !(CategoryTaxonomy.Resolve(rule.CategoryId).Kind == CategoryKind.Income && !inflow))
         {
             var category = CategoryTaxonomy.Resolve(rule.CategoryId);
             var type = rule.Type ?? CategoryTaxonomy.ImpliedType(category, input.Amount);

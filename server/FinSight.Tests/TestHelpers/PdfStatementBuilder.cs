@@ -48,6 +48,52 @@ internal sealed class PdfStatementBuilder
         return builder.Build();
     }
 
+    /// <summary>
+    /// A chequing statement for Maple Credit Union (or <paramref name="institution"/>) account ••7890 with a running balance. Rows are
+    /// (day of month, description, signed amount). <paramref name="note"/> changes the file's bytes without changing its data.
+    /// </summary>
+    public static byte[] Chequing(int year, int month, decimal opening, IEnumerable<(int Day, string Description, decimal Amount)> rows, string? note = null,
+        string institution = "Maple Credit Union")
+    {
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        var monthName = new DateTime(year, month, 1).ToString("MMMM", culture);
+        var abbreviation = new DateTime(year, month, 1).ToString("MMM", culture);
+        var lastDay = DateTime.DaysInMonth(year, month);
+        string Money(decimal value) => value.ToString("#,##0.00", culture);
+
+        var builder = new PdfStatementBuilder()
+            .Text(institution)
+            .Text("Everyday Chequing Account")
+            .Text("Account number: 000123-4567890")
+            .Text($"Statement period: {monthName} 1, {year} to {monthName} {lastDay}, {year}");
+
+        if (note is not null)
+        {
+            builder.Text(note);
+        }
+
+        builder
+            .Line((40, "Date"), (100, "Description"), (-400, "Withdrawals"), (-480, "Deposits"), (-570, "Balance"))
+            .Line((40, $"{abbreviation} 1"), (100, "Opening balance"), (-570, Money(opening)));
+
+        var balance = opening;
+        foreach (var (day, description, amount) in rows)
+        {
+            balance += amount;
+            builder.Line((40, $"{abbreviation} {day}"), (100, description), amount < 0 ? (-400, Money(-amount)) : (-480, Money(amount)), (-570, Money(balance)));
+        }
+
+        return builder.Line((40, $"{abbreviation} {lastDay}"), (100, "Closing balance"), (-570, Money(balance))).Build();
+    }
+
+    /// <summary>A page with no text at all, like a scanned statement.</summary>
+    public static byte[] Blank()
+    {
+        var builder = new PdfDocumentBuilder();
+        builder.AddPage(612, 792);
+        return builder.Build();
+    }
+
     public static byte[] SampleChequingStatement() => new PdfStatementBuilder()
         .Text("Maple Credit Union")
         .Text("Everyday Chequing Account")

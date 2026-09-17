@@ -2,6 +2,7 @@ using FinSight.Api.Auth;
 using FinSight.Api.Contracts;
 using FinSight.Api.Middleware;
 using FinSight.Core.Domain;
+using FinSight.Core.Statements;
 using FinSight.Infrastructure.Gmail;
 using FinSight.Infrastructure.Insights;
 using FinSight.Infrastructure.Persistence;
@@ -18,11 +19,12 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
 {
     private const int MaxStatementsPerJob = 60;
     private const long MaxUploadBytes = 20 * 1024 * 1024;
+    private const int MaxPendingUploads = 30;
 
     [HttpGet]
     public async Task<IReadOnlyList<StatementDto>> List(CancellationToken cancellationToken)
     {
-        var statements = await db.Statements.AsNoTracking().ToListAsync(cancellationToken);
+        var statements = await db.Statements.AsNoTracking().Where(s => s.Status != StatementStatus.Dismissed).ToListAsync(cancellationToken);
         return statements
             .OrderByDescending(s => s.PeriodEnd ?? DateOnly.FromDateTime((s.ReceivedAt ?? s.CreatedAt).UtcDateTime))
             .Select(s => s.ToDto())
@@ -34,7 +36,7 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
     {
         var statement = await db.Statements.AsNoTracking()
             .Include(s => s.Transactions)
-            .SingleOrDefaultAsync(s => s.Id == id, cancellationToken);
+            .SingleOrDefaultAsync(s => s.Id == id && s.Status != StatementStatus.Dismissed, cancellationToken);
 
         if (statement is null)
         {
@@ -50,7 +52,7 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
 
         return new StatementDetailDto(
             statement.ToDto(),
-            statement.Subject,
+            Mapping.MaskedSubject(statement.Subject),
             statement.Currency,
             statement.OpeningBalance,
             statement.ClosingBalance,
@@ -92,7 +94,7 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
     public async Task<ActionResult<JobStartedResponse>> Process(ProcessStatementsRequest request, CancellationToken cancellationToken)
     {
         var ids = request.StatementIds.Distinct().Take(MaxStatementsPerJob).ToList();
-        var statements = await db.Statements.Where(s => ids.Contains(s.Id)).ToListAsync(cancellationToken);
+        var statements = await db.Statements.Where(s => ids.Contains(s.Id) && s.Status != StatementStatus.Dismissed).ToListAsync(cancellationToken);
 
         if (statements.Count == 0)
         {
@@ -104,7 +106,8 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
             return ApiErrors.Problem(StatusCodes.Status409Conflict, "demo_mode", "Sample statements are already processed.");
         }
 
-        if (statements.Any(s => s.Source == StatementSourceKind.ManualUpload))
+        // Uploaded statements and statement alerts (emails without the PDF) can only be processed from an uploaded file.
+        if (statements.Any(s => s.Source == StatementSourceKind.ManualUpload || s.Status == StatementStatus.AwaitingUpload || StatementAlert.IsAlert(s)))
         {
             return ApiErrors.Problem(StatusCodes.Status409Conflict, StatementFailure.UploadRequired, StatementFailure.Message(StatementFailure.UploadRequired));
         }
@@ -122,7 +125,8 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
 
     /// <summary>
     /// Manual upload through the same pipeline. The PDF is processed in memory and never written to disk.
-    /// Pass <c>statementId</c> to re-upload the file for an existing statement.
+    /// Pass <c>statementId</c> to re-upload the file for an existing statement, or to supply the PDF a statement alert asked for.
+    /// Without it, a successful import also clears the matching statement alert (same bank and account, around the period end).
     /// </summary>
     [HttpPost("/api/uploads/statements")]
     [EnableRateLimiting(RateLimits.Upload)]
@@ -150,13 +154,21 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
         }
 
         var userId = User.GetUserId();
+
+        // Uploads are processed one at a time per user and held in memory until then, so cap how many can wait.
+        var pending = await db.ProcessingJobs.CountAsync(j => j.Kind == JobKind.Upload && (j.Status == JobStatus.Queued || j.Status == JobStatus.Running), cancellationToken);
+        if (pending >= MaxPendingUploads)
+        {
+            return ApiErrors.Problem(StatusCodes.Status429TooManyRequests, "rate_limited", "Your earlier uploads are still processing. Wait a moment and try again.");
+        }
+
         var now = time.GetUtcNow();
         var hash = StatementImportService.HashOf(bytes);
         Statement? statement;
 
         if (statementId is not null)
         {
-            statement = await db.Statements.SingleOrDefaultAsync(s => s.Id == statementId, cancellationToken);
+            statement = await db.Statements.SingleOrDefaultAsync(s => s.Id == statementId && s.Status != StatementStatus.Dismissed, cancellationToken);
             if (statement is null)
             {
                 return ApiErrors.NotFound("statement");
@@ -183,7 +195,16 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
                     UpdatedAt = now,
                 };
                 db.Statements.Add(statement);
-                await db.SaveChangesAsync(cancellationToken);
+                try
+                {
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                catch (DbUpdateException)
+                {
+                    // The same file uploaded twice at once: the unique source key lets exactly one insert win.
+                    db.ChangeTracker.Clear();
+                    statement = await db.Statements.SingleAsync(s => s.SourceKey == $"upload:{hash}", cancellationToken);
+                }
             }
         }
 
@@ -192,11 +213,66 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
         return Accepted(new UploadStartedResponse(job.Id, statement.Id));
     }
 
-    /// <summary>Deletes the statement and every transaction imported from it.</summary>
-    [HttpDelete("{id:guid}")]
-    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    /// <summary>Hides a statement alert the user doesn't want to upload. A rescan never brings it back.</summary>
+    [HttpPost("{id:guid}/dismiss")]
+    public async Task<IActionResult> Dismiss(Guid id, CancellationToken cancellationToken)
     {
-        var deleted = await db.Statements.Where(s => s.Id == id).ExecuteDeleteAsync(cancellationToken);
-        return deleted == 0 ? ApiErrors.NotFound("statement") : NoContent();
+        var statement = await db.Statements.SingleOrDefaultAsync(s => s.Id == id && s.Status != StatementStatus.Dismissed, cancellationToken);
+        if (statement is null)
+        {
+            return ApiErrors.NotFound("statement");
+        }
+
+        if (statement.Status != StatementStatus.AwaitingUpload)
+        {
+            return ApiErrors.Problem(StatusCodes.Status409Conflict, "not_awaiting_upload", "Only statement alerts waiting for an upload can be dismissed.");
+        }
+
+        statement.Status = StatementStatus.Dismissed;
+        statement.UpdatedAt = time.GetUtcNow();
+        await db.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// Deletes the statement and every transaction imported from it. A statement alert's row is kept, dismissed and emptied,
+    /// because Gmail discovery skips emails it has already recorded; deleting it would let the next scan recreate it.
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, [FromServices] CategorizationService categorization, CancellationToken cancellationToken)
+    {
+        var statement = await db.Statements.SingleOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (statement is null || statement.Status == StatementStatus.Dismissed)
+        {
+            return ApiErrors.NotFound("statement");
+        }
+
+        int deleted;
+        if (StatementAlert.IsAlert(statement))
+        {
+            var alert = statement;
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            await db.Transactions.Where(t => t.StatementId == id).ExecuteDeleteAsync(cancellationToken);
+            alert.Status = StatementStatus.Dismissed;
+            alert.TransactionCount = 0;
+            alert.ContentHash = null;
+            alert.FailureCode = null;
+            alert.UpdatedAt = time.GetUtcNow();
+            deleted = await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        else
+        {
+            deleted = await db.Statements.Where(s => s.Id == id).ExecuteDeleteAsync(cancellationToken);
+        }
+
+        if (deleted == 0)
+        {
+            return ApiErrors.NotFound("statement");
+        }
+
+        // Transfers matched against this statement's transactions lose their other side.
+        await categorization.ReleaseOrphanedTransfersAsync(cancellationToken);
+        return NoContent();
     }
 }

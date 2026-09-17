@@ -23,7 +23,8 @@ public sealed class GeminiOptions
 }
 
 /// <summary>Low-level structured-output call to the Gemini REST API. Used only by <see cref="GeminiService"/>.</summary>
-public sealed partial class GeminiClient(HttpClient http, IOptions<GeminiOptions> options, ILogger<GeminiClient> logger)
+/// <remarks>The API key comes from <see cref="IGeminiKeyResolver"/>: the current user's own key, else the server key.</remarks>
+public sealed partial class GeminiClient(HttpClient http, IGeminiKeyResolver keys, IOptions<GeminiOptions> options, ILogger<GeminiClient> logger)
 {
     private const string Endpoint = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -38,7 +39,8 @@ public sealed partial class GeminiClient(HttpClient http, IOptions<GeminiOptions
         where T : class
     {
         var settings = options.Value;
-        if (!settings.IsConfigured)
+        var apiKey = await keys.ResolveAsync(cancellationToken);
+        if (apiKey is null)
         {
             throw new AiUnavailableException(AiFailure.NotConfigured);
         }
@@ -70,7 +72,7 @@ public sealed partial class GeminiClient(HttpClient http, IOptions<GeminiOptions
             {
                 Content = JsonContent.Create(body),
             };
-            request.Headers.Add("x-goog-api-key", settings.ApiKey);
+            request.Headers.Add("x-goog-api-key", apiKey);
 
             HttpResponseMessage response;
             try
@@ -106,13 +108,25 @@ public sealed partial class GeminiClient(HttpClient http, IOptions<GeminiOptions
                     throw new AiUnavailableException(response.StatusCode == HttpStatusCode.TooManyRequests ? AiFailure.RateLimited : AiFailure.Unavailable);
                 }
 
-                var json = await response.Content.ReadFromJsonAsync<JsonObject>(timeout.Token);
-                var candidate = json?["candidates"]?.AsArray().FirstOrDefault();
-                var text = string.Concat(candidate?["content"]?["parts"]?.AsArray().Select(p => p?["text"]?.GetValue<string>() ?? string.Empty) ?? []);
+                string text;
+                string finishReason;
+                try
+                {
+                    var json = await response.Content.ReadFromJsonAsync<JsonObject>(timeout.Token);
+                    var candidate = json?["candidates"]?.AsArray().FirstOrDefault();
+                    text = string.Concat(candidate?["content"]?["parts"]?.AsArray().Select(p => p?["text"]?.GetValue<string>() ?? string.Empty) ?? []);
+                    finishReason = candidate?["finishReason"]?.GetValue<string>() ?? "unknown";
+                }
+                catch (Exception ex) when (ex is JsonException or InvalidOperationException or NotSupportedException)
+                {
+                    // Not JSON, or JSON of an unexpected shape (for example an HTML error page from a proxy).
+                    LogInvalidJson(logger, settings.Model);
+                    throw new AiUnavailableException(AiFailure.InvalidResponse, ex);
+                }
 
                 if (string.IsNullOrWhiteSpace(text))
                 {
-                    LogEmptyResponse(logger, candidate?["finishReason"]?.GetValue<string>() ?? "unknown", settings.Model);
+                    LogEmptyResponse(logger, finishReason, settings.Model);
                     throw new AiUnavailableException(AiFailure.InvalidResponse);
                 }
 

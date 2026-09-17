@@ -17,6 +17,16 @@ public sealed class User
     public required string DisplayName { get; set; }
     public bool IsDemo { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>When the user finished (or skipped past) first-run onboarding. Null sends the web app to onboarding.</summary>
+    public DateTimeOffset? OnboardingCompletedAt { get; set; }
+
+    /// <summary>The user's own Gemini API key, encrypted with ASP.NET Data Protection. Never leaves the server.</summary>
+    public string? EncryptedGeminiApiKey { get; set; }
+
+    /// <summary>Last four characters of the Gemini key, so the UI can show which key is saved. Not secret.</summary>
+    public string? GeminiApiKeyHint { get; set; }
+
     public UserSettings Settings { get; set; } = new();
 }
 
@@ -53,7 +63,8 @@ public sealed class Statement : IUserOwned
     public StatementSourceKind Source { get; set; }
 
     /// <summary>
-    /// Idempotency key, unique per user: <c>gmail:{messageId}:{partId}</c> or <c>upload:{sha256}</c>.
+    /// Idempotency key, unique per user: <c>gmail:{messageId}:{partId}</c>, <c>gmail:{messageId}:alert</c> for an
+    /// email that announces a statement without attaching it, or <c>upload:{sha256}</c>.
     /// Gmail attachment ids are not stable between API calls, so the MIME part id is used instead.
     /// </summary>
     public required string SourceKey { get; set; }

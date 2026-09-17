@@ -3,6 +3,8 @@ using FinSight.Core.Analytics;
 using FinSight.Core.Categories;
 using FinSight.Core.Domain;
 using FinSight.Core.Insights;
+using FinSight.Core.Statements;
+using FinSight.Core.Text;
 using FinSight.Infrastructure.Insights;
 using FinSight.Infrastructure.Pipeline;
 
@@ -10,9 +12,23 @@ namespace FinSight.Api.Contracts;
 
 public sealed record Capabilities(bool GoogleSignIn, bool Gmail, bool Ai, bool Demo);
 
-public sealed record SessionUser(Guid Id, string Name, string Email, bool IsDemo);
+/// <param name="OnboardingCompleted">False sends the web app to first-run onboarding. Always true for demo users.</param>
+public sealed record SessionUser(Guid Id, string Name, string Email, bool IsDemo, bool OnboardingCompleted);
 
 public sealed record SessionResponse(bool Authenticated, SessionUser? User, Capabilities Capabilities);
+
+/// <summary>Development-only OAuth setup report. Never contains credential values.</summary>
+public sealed record AuthDiagnostics(GoogleDiagnostics Google, IReadOnlyList<string> Hints);
+
+public sealed record GoogleDiagnostics(
+    bool ClientIdSet,
+    bool ClientIdFormatValid,
+    bool ClientSecretSet,
+    bool HandlerRegistered,
+    bool RestartRequired,
+    string JavaScriptOrigin,
+    string RedirectUri,
+    IReadOnlyList<string> Scopes);
 
 public sealed record SettingsDto(
     string Currency,
@@ -21,6 +37,11 @@ public sealed record SettingsDto(
     bool AiCategorizationEnabled,
     bool AiInsightsEnabled,
     bool NotificationsEnabled);
+
+/// <summary>Which Gemini key AI features use. The key itself is never returned; <c>Hint</c> is "…" plus its last four characters.</summary>
+public sealed record AiKeyStatusDto(bool HasUserKey, string? Hint, bool ServerKeyAvailable, string Model);
+
+public sealed record SaveAiKeyRequest(string? ApiKey);
 
 public sealed record GmailConnectionDto(bool Connected, string? Email, GmailConnectionStatus? Status, DateTimeOffset? ConnectedAt, DateTimeOffset? LastSyncedAt);
 
@@ -50,7 +71,14 @@ public sealed record StatementDto(
     double? ExtractionConfidence,
     int TransactionCount,
     bool CanReprocess,
-    bool ReprocessNeedsUpload);
+    bool ReprocessNeedsUpload,
+    string? Subject,
+    IReadOnlyList<string> DetectionReasons,
+    string? SignInUrl,
+    string? DownloadHint);
+
+/// <summary>A bank FinSight can name, with trusted sign-in guidance from <c>KnownInstitutions</c> (never from user or email content).</summary>
+public sealed record InstitutionDto(string Id, string Name, string? SignInUrl, string? DownloadHint);
 
 public sealed record StatementDetailDto(
     StatementDto Statement,
@@ -163,27 +191,41 @@ public static class Mapping
     public static SettingsDto ToDto(this UserSettings s) =>
         new(s.Currency, s.DateFormat, s.Theme, s.AiCategorizationEnabled, s.AiInsightsEnabled, s.NotificationsEnabled);
 
-    public static StatementDto ToDto(this Statement s) => new(
-        s.Id,
-        StatementLabels.Title(s),
-        s.Institution,
-        s.AccountType,
-        s.AccountMask,
-        s.DocumentKind,
-        s.Source,
-        s.Filename,
-        SenderName(s.Sender),
-        s.ReceivedAt,
-        s.PeriodStart,
-        s.PeriodEnd,
-        s.Status,
-        s.FailureCode,
-        s.FailureCode is null ? null : StatementFailure.Message(s.FailureCode),
-        s.DetectionConfidence,
-        s.ExtractionConfidence,
-        s.TransactionCount,
-        CanReprocess: s.Source != StatementSourceKind.Demo && s.Status is not (StatementStatus.Downloading or StatementStatus.Processing),
-        ReprocessNeedsUpload: s.Source == StatementSourceKind.ManualUpload);
+    public static StatementDto ToDto(this Statement s)
+    {
+        // Sign-in links come only from the hard-coded institution list, never from the email, so they can't be phishing links.
+        var institution = KnownInstitutions.FindByName(s.Institution);
+        return new(
+            s.Id,
+            StatementLabels.Title(s),
+            s.Institution,
+            s.AccountType,
+            s.AccountMask,
+            s.DocumentKind,
+            s.Source,
+            s.Filename,
+            SenderName(s.Sender),
+            s.ReceivedAt,
+            s.PeriodStart,
+            s.PeriodEnd,
+            s.Status,
+            s.FailureCode,
+            s.FailureCode is null ? null : StatementFailure.Message(s.FailureCode),
+            s.DetectionConfidence,
+            s.ExtractionConfidence,
+            s.TransactionCount,
+            CanReprocess: s.Source != StatementSourceKind.Demo && s.Status is not (StatementStatus.Downloading or StatementStatus.Processing),
+            ReprocessNeedsUpload: s.Source == StatementSourceKind.ManualUpload || StatementAlert.IsAlert(s),
+            Subject: MaskedSubject(s.Subject),
+            DetectionReasons: ReadList(s.DetectionReasons),
+            SignInUrl: institution?.SignInUrl,
+            DownloadHint: institution?.DownloadHint);
+    }
+
+    public static InstitutionDto ToDto(this Institution i) => new(i.Id, i.Name, i.SignInUrl, i.DownloadHint);
+
+    /// <summary>Subjects are masked when discovered; masking again (idempotent) guards rows stored by older versions.</summary>
+    public static string? MaskedSubject(string? subject) => subject is null ? null : SensitiveDataMasker.Mask(subject);
 
     public static IReadOnlyList<string> ReadList(string? json) =>
         string.IsNullOrEmpty(json) ? [] : JsonSerializer.Deserialize<List<string>>(json, Json) ?? [];

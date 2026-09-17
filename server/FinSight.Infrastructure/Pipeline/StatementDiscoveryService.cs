@@ -9,9 +9,14 @@ using Microsoft.Extensions.Options;
 
 namespace FinSight.Infrastructure.Pipeline;
 
-public sealed record DiscoveryResult(int MessagesScanned, int NewStatements, int TotalStatements);
+/// <param name="NewAlerts">Emails saying a statement is ready without attaching it, now awaiting an upload.</param>
+public sealed record DiscoveryResult(int MessagesScanned, int NewStatements, int TotalStatements, int NewAlerts = 0);
 
-/// <summary>Searches Gmail, classifies candidate emails and records likely statements as "discovered".</summary>
+/// <summary>
+/// Searches Gmail, classifies candidate emails and records likely statements as "discovered", and statement alerts
+/// (no PDF attached) as "awaiting upload". A message is only ever looked at once: rows are kept for dismissed alerts
+/// so a rescan never brings them back.
+/// </summary>
 public sealed class StatementDiscoveryService(
     FinSightDbContext db,
     GoogleTokenService tokens,
@@ -76,12 +81,36 @@ public sealed class StatementDiscoveryService(
 
         var now = time.GetUtcNow();
         var added = 0;
+        var alerts = 0;
+        List<Statement>? processed = null;
 
         foreach (var email in candidates)
         {
             var detection = StatementEmailClassifier.Classify(email);
             if (!detection.IsStatement)
             {
+                if (StatementEmailClassifier.DetectAlert(email) is { } alert)
+                {
+                    // Statements uploaded before this scan may already answer the alert.
+                    processed ??= await db.Statements
+                        .Where(s => s.Status == StatementStatus.Processed && s.PeriodEnd != null && s.Institution != null)
+                        .AsNoTracking()
+                        .ToListAsync(cancellationToken);
+
+                    var row = NewAlertRow(userId, email, alert, now);
+                    if (processed.Any(p => StatementAlertMatching.Matches(row, p)))
+                    {
+                        row.Status = StatementStatus.Dismissed;
+                        row.ExtractionWarnings = JsonSerializer.Serialize(new[] { StatementImportService.FulfilledByUploadNote });
+                    }
+                    else
+                    {
+                        alerts++;
+                    }
+
+                    db.Statements.Add(row);
+                }
+
                 continue;
             }
 
@@ -118,8 +147,31 @@ public sealed class StatementDiscoveryService(
         await db.SaveChangesAsync(cancellationToken);
 
         var total = await db.Statements.CountAsync(s => s.Source == StatementSourceKind.Gmail, cancellationToken);
-        return new DiscoveryResult(toFetch.Count, added, total);
+        return new DiscoveryResult(toFetch.Count, added, total, alerts);
     }
+
+    private static Statement NewAlertRow(Guid userId, EmailCandidate email, StatementAlert alert, DateTimeOffset now) => new()
+    {
+        UserId = userId,
+        Source = StatementSourceKind.Gmail,
+        SourceKey = StatementAlert.SourceKey(email.MessageId),
+        SourceMessageId = email.MessageId,
+        SourceThreadId = email.ThreadId,
+        // The message text is only read to classify; only the masked subject, the institution and the last four digits are kept.
+        Subject = Truncate(SensitiveDataMasker.Mask(email.Subject), 500),
+        Sender = Truncate(email.From, 500),
+        ReceivedAt = alert.ReceivedAt,
+        Filename = string.Empty,
+        DocumentKind = alert.DocumentKind,
+        DetectionConfidence = alert.Confidence,
+        DetectionReasons = JsonSerializer.Serialize(alert.Reasons),
+        Institution = alert.Institution,
+        AccountType = alert.AccountType,
+        AccountMask = alert.AccountMask,
+        Status = StatementStatus.AwaitingUpload,
+        CreatedAt = now,
+        UpdatedAt = now,
+    };
 
     public async Task<byte[]> DownloadAsync(Guid userId, Statement statement, CancellationToken cancellationToken)
     {

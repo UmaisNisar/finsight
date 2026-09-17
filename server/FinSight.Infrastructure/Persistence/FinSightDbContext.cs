@@ -45,6 +45,7 @@ public sealed class FinSightDbContext(
             e.HasIndex(u => u.GoogleSubject).IsUnique().HasFilter("GoogleSubject IS NOT NULL");
             e.Property(u => u.Email).HasMaxLength(320);
             e.Property(u => u.DisplayName).HasMaxLength(200);
+            e.Property(u => u.GeminiApiKeyHint).HasMaxLength(4);
             e.ComplexProperty(u => u.Settings, s =>
             {
                 s.Property(p => p.Currency).HasMaxLength(3);

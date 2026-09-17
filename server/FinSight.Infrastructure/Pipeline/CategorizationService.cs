@@ -40,7 +40,7 @@ public sealed partial class CategorizationService(
     /// </summary>
     public async Task<AiCategorizationOutcome> CategorizeWithAiAsync(IReadOnlyCollection<Guid> statementIds, CancellationToken cancellationToken)
     {
-        if (!gemini.IsConfigured)
+        if (!await gemini.IsConfiguredAsync(cancellationToken))
         {
             return new AiCategorizationOutcome(0, 0, AiFailure.NotConfigured);
         }
@@ -51,7 +51,7 @@ public sealed partial class CategorizationService(
             .ToListAsync(cancellationToken);
 
         var groups = pending
-            .GroupBy(t => (t.MerchantKey, Direction: t.Amount > 0 ? "in" : "out"))
+            .GroupBy(t => (t.MerchantKey, Direction: t.Amount > 0 ? MerchantDirection.In : MerchantDirection.Out))
             .Where(g => g.Key.MerchantKey != "unknown")
             .OrderByDescending(g => g.Sum(t => Math.Abs(t.Amount)))
             .Take(MaxAiMerchantsPerRun)
@@ -86,7 +86,9 @@ public sealed partial class CategorizationService(
         var now = time.GetUtcNow();
         var userId = pending[0].UserId;
 
-        foreach (var result in results)
+        // Outgoing results first, so when a merchant both pays and charges the user, the cached rule describes spending.
+        var ruleUpdated = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var result in results.OrderBy(r => r.Direction == MerchantDirection.Out ? 0 : 1))
         {
             if (existingRules.TryGetValue(result.MerchantKey, out var rule))
             {
@@ -102,15 +104,19 @@ public sealed partial class CategorizationService(
                 existingRules[result.MerchantKey] = rule;
             }
 
-            rule.CategoryId = result.CategoryId;
-            rule.Type = result.Type;
-            rule.DisplayName = result.Merchant;
-            rule.Source = CategorySource.Ai;
-            rule.Confidence = result.Confidence;
-            rule.Reason = result.Reason;
-            rule.UpdatedAt = now;
+            if (ruleUpdated.Add(result.MerchantKey))
+            {
+                rule.CategoryId = result.CategoryId;
+                rule.Type = result.Type;
+                rule.DisplayName = result.Merchant;
+                rule.Source = CategorySource.Ai;
+                rule.Confidence = result.Confidence;
+                rule.Reason = result.Reason;
+                rule.UpdatedAt = now;
+            }
 
-            foreach (var transaction in pending.Where(t => t.MerchantKey == result.MerchantKey))
+            var inbound = result.Direction == MerchantDirection.In;
+            foreach (var transaction in pending.Where(t => t.MerchantKey == result.MerchantKey && t.Amount > 0 == inbound))
             {
                 var inflow = transaction.Amount > 0;
                 var isRefund = inflow && result.Type == TransactionType.Expense;
@@ -169,6 +175,41 @@ public sealed partial class CategorizationService(
 
         await db.SaveChangesAsync(cancellationToken);
         return pairs.Count;
+    }
+
+    /// <summary>
+    /// When one side of a matched transfer is deleted or re-imported, the other side loses the evidence that made it a
+    /// transfer. It is recategorized from its own description, exactly as if its statement had been imported alone;
+    /// the next transfer match can pair it again. User-edited transactions keep their edits.
+    /// </summary>
+    public async Task<int> ReleaseOrphanedTransfersAsync(CancellationToken cancellationToken)
+    {
+        var paired = await db.Transactions
+            .Include(t => t.Statement)
+            .Where(t => t.TransferPairId != null)
+            .ToListAsync(cancellationToken);
+
+        var orphans = paired
+            .GroupBy(t => t.TransferPairId)
+            .Where(g => g.Count() == 1)
+            .Select(g => g.Single())
+            .ToList();
+
+        if (orphans.Count == 0)
+        {
+            return 0;
+        }
+
+        var rules = await LoadRulesAsync(cancellationToken);
+        foreach (var transaction in orphans)
+        {
+            transaction.TransferPairId = null;
+            Apply(transaction, RuleCategorizer.Categorize(
+                new CategorizationInput(transaction.Description, transaction.MerchantKey, transaction.Amount, transaction.Statement?.AccountType ?? AccountType.Unknown), rules));
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        return orphans.Count;
     }
 
     private async Task<Dictionary<string, MerchantRule>> LoadRulesAsync(CancellationToken cancellationToken) =>

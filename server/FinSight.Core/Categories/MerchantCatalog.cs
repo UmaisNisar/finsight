@@ -185,7 +185,7 @@ public static class MerchantCatalog
     /// <summary>Generic words that suggest a category when no merchant matched. Lower confidence.</summary>
     public static readonly IReadOnlyList<CatalogEntry> Keywords =
     [
-        new(@"\bRESTAURANT|\bBISTRO|\bGRILL\b|\bSUSHI|\bPIZZ|\bTAQUERIA|\bRAMEN|\bPHO\b|\bKITCHEN\b|\bEATERY|\bDINER\b|\bBRASSERIE|\bSHAWARMA|\bBURGER|\bTHAI\b|\bPUB\b|\bBAR ?& ?GRILL", null, "food.restaurants", 0.7),
+        new(@"\bRESTAURANT|\bBISTRO|\bGRILL\b|\bSUSHI|\bPIZZ|\bTAQUERIA|\bRAMEN|\bPHO\b|\bKITCHEN\b|\bEATERY|\bDINER\b|\bBRASSERIE|\bSHAWARMA|\bBURGER|\bTHAI\b|\bPUB\b|\bBAR ?& ?GRILL|\bBURRITO|\bTACOS?\b|\bNOODLES?\b|\bDUMPLINGS?\b", null, "food.restaurants", 0.7),
         new(@"\bCAFE\b|\bCAFÉ|\bCOFFEE|\bESPRESSO|\bBAKERY", null, "food.coffee", 0.7),
         new(@"\bGROCER|\bSUPERMARKET|\bMARKET ?PLACE FOODS|\bFOODS? MARKET|\bBUTCHER", null, "food.groceries", 0.7),
         new(@"\bPHARMACY|\bPHARMACIE|\bDRUG ?STORE|\bDRUG MART|\bCHEMIST", null, "health.pharmacy", 0.75),

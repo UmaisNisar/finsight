@@ -1,6 +1,5 @@
 using FinSight.Core.Abstractions;
 using FinSight.Core.Insights;
-using Microsoft.Extensions.Options;
 
 namespace FinSight.Infrastructure.Gemini;
 
@@ -8,11 +7,12 @@ namespace FinSight.Infrastructure.Gemini;
 /// The only place the application talks to Gemini. Every response is parsed into a raw type and
 /// validated against the data that was sent before anything else sees it.
 /// </summary>
-public sealed class GeminiService(GeminiClient client, IOptions<GeminiOptions> options) : IGeminiService
+public sealed class GeminiService(GeminiClient client, IGeminiKeyResolver keys) : IGeminiService
 {
     private const int CategorizationBatchSize = 40;
 
-    public bool IsConfigured => options.Value.IsConfigured;
+    /// <summary>True when the current user has their own key or the server has one.</summary>
+    public async Task<bool> IsConfiguredAsync(CancellationToken cancellationToken) => await keys.ResolveAsync(cancellationToken) is not null;
 
     public async Task<IReadOnlyList<MerchantCategorization>> CategorizeTransactionsAsync(
         IReadOnlyList<MerchantCategorizationRequest> merchants, CancellationToken cancellationToken)

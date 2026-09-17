@@ -78,7 +78,7 @@ public sealed class AnalysisService(FinSightDbContext db, DashboardService dashb
             throw new AnalysisUnavailableException(AnalysisUnavailableReason.Disabled);
         }
 
-        if (!gemini.IsConfigured)
+        if (!await gemini.IsConfiguredAsync(cancellationToken))
         {
             throw new AnalysisUnavailableException(AnalysisUnavailableReason.NotConfigured);
         }

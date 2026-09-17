@@ -74,7 +74,7 @@ internal static class GeminiPrompts
             allowed.Append("- ").Append(category.Id).Append(" (").Append(category.Name).Append(", ").Append(category.Kind).AppendLine(")");
         }
 
-        var items = merchants.Select(m => new { @ref = m.Ref, merchant = m.Merchant, descriptor = m.SampleDescription, direction = m.Direction, typicalAmount = m.TypicalAmount, occurrences = m.Occurrences });
+        var items = merchants.Select(m => new { @ref = m.Ref, merchant = m.Merchant, descriptor = m.SampleDescription, direction = m.Direction == MerchantDirection.In ? "in" : "out", typicalAmount = m.TypicalAmount, occurrences = m.Occurrences });
 
         return $"""
             Allowed categories:

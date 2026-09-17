@@ -12,7 +12,7 @@ namespace FinSight.Api.Controllers;
 
 [ApiController]
 [Route("api/gmail")]
-public sealed class GmailController(FinSightDbContext db, IConfiguration configuration) : ControllerBase
+public sealed class GmailController(FinSightDbContext db, IAuthenticationSchemeProvider schemes) : ControllerBase
 {
     [HttpGet]
     public async Task<GmailConnectionDto> Get(CancellationToken cancellationToken)
@@ -27,22 +27,25 @@ public sealed class GmailController(FinSightDbContext db, IConfiguration configu
     /// Browser navigation target: asks Google for read-only Gmail access (incremental consent, offline
     /// access so syncing works later). The refresh token is stored encrypted server-side.
     /// </summary>
+    /// <param name="returnTo">Same-site path to come back to, for example onboarding. Defaults to (and unsafe values fall back to) /statements.</param>
     [HttpGet("connect")]
-    public IActionResult Connect()
+    public async Task<IActionResult> Connect([FromQuery] string? returnTo)
     {
-        if (!configuration.IsGoogleConfigured())
+        returnTo = ReturnUrls.Safe(returnTo, GoogleAccountLinker.DefaultGmailReturn);
+
+        if (!await schemes.IsGoogleAvailableAsync())
         {
-            return Redirect("/statements?gmail=unavailable");
+            return Redirect(GoogleAccountLinker.GmailRedirect(returnTo, "unavailable"));
         }
 
         if (User.IsDemoUser())
         {
-            return Redirect("/statements?gmail=demo");
+            return Redirect(GoogleAccountLinker.GmailRedirect(returnTo, "demo"));
         }
 
         var properties = new GoogleChallengeProperties
         {
-            RedirectUri = "/statements?gmail=connected",
+            RedirectUri = GoogleAccountLinker.GmailRedirect(returnTo, "connected"),
             AccessType = "offline",
             Prompt = "consent",
             IncludeGrantedScopes = true,
@@ -50,6 +53,8 @@ public sealed class GmailController(FinSightDbContext db, IConfiguration configu
         };
         properties.SetScope("openid", "email", "profile", GoogleIntegrationOptions.GmailReadonlyScope);
         properties.Items[GoogleAccountLinker.IntentKey] = GoogleAccountLinker.GmailIntent;
+        properties.Items[GoogleAccountLinker.InitiatingUserKey] = User.GetUserId().ToString();
+        properties.Items[GoogleAccountLinker.ReturnToKey] = returnTo;
 
         return Challenge(properties, AuthenticationSetup.GoogleScheme);
     }

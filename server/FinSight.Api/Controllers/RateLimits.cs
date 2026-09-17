@@ -7,12 +7,17 @@ namespace FinSight.Api.Controllers;
 public static class RateLimits
 {
     public const string Ai = "ai";
+    public const string AiKey = "ai-key";
     public const string Sync = "sync";
     public const string Upload = "upload";
     public const string Demo = "demo";
 
-    public static IServiceCollection AddFinSightRateLimiting(this IServiceCollection services)
+    public static IServiceCollection AddFinSightRateLimiting(this IServiceCollection services, IConfiguration configuration)
     {
+        // Demo sign-ins create a user with a year of data each, so they are limited per client address.
+        var demoPerHour = configuration.GetValue("RateLimits:DemoPerHour", 20);
+        var uploadsPerHour = configuration.GetValue("RateLimits:UploadsPerHour", 120);
+
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -33,22 +38,32 @@ public static class RateLimits
                 Window = TimeSpan.FromMinutes(10),
             }));
 
+            // Saving a Gemini key calls Google to check it; the limit also stops the endpoint being used to test stolen keys.
+            options.AddPolicy(AiKey, context => RateLimitPartition.GetFixedWindowLimiter(PartitionKey(context), _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(10),
+            }));
+
             options.AddPolicy(Sync, context => RateLimitPartition.GetFixedWindowLimiter(PartitionKey(context), _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 12,
                 Window = TimeSpan.FromMinutes(10),
             }));
 
-            options.AddPolicy(Upload, context => RateLimitPartition.GetFixedWindowLimiter(PartitionKey(context), _ => new FixedWindowRateLimiterOptions
+            // Some banks (CIBC) only offer one PDF per month, so a year across a few accounts is dozens of uploads in a row.
+            // Each file is also capped in size, and StatementsController limits how many uploads can wait to be processed.
+            options.AddPolicy(Upload, context => RateLimitPartition.GetSlidingWindowLimiter(PartitionKey(context), _ => new SlidingWindowRateLimiterOptions
             {
-                PermitLimit = 40,
+                PermitLimit = uploadsPerHour,
                 Window = TimeSpan.FromHours(1),
+                SegmentsPerWindow = 6,
             }));
 
             options.AddPolicy(Demo, context => RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions
                 {
-                    PermitLimit = 20,
+                    PermitLimit = demoPerHour,
                     Window = TimeSpan.FromHours(1),
                 }));
         });

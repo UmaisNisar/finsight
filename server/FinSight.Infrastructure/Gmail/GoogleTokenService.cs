@@ -41,9 +41,12 @@ public sealed partial class GoogleTokenService(
     private const string TokenEndpoint = "https://oauth2.googleapis.com/token";
     private const string RevokeEndpoint = "https://oauth2.googleapis.com/revoke";
 
+    /// <summary>Where a user's short-lived access token is cached. Cleared whenever the stored grant changes.</summary>
+    public static string AccessTokenCacheKey(Guid userId) => $"gmail-access:{userId}";
+
     public async Task<string> GetAccessTokenAsync(Guid userId, CancellationToken cancellationToken)
     {
-        var cacheKey = $"gmail-access:{userId}";
+        var cacheKey = AccessTokenCacheKey(userId);
         if (cache.TryGetValue(cacheKey, out string? cached) && cached is not null)
         {
             return cached;
@@ -116,7 +119,7 @@ public sealed partial class GoogleTokenService(
             }
         }
 
-        cache.Remove($"gmail-access:{userId}");
+        cache.Remove(AccessTokenCacheKey(userId));
         db.GmailConnections.Remove(connection);
         await db.SaveChangesAsync(cancellationToken);
     }

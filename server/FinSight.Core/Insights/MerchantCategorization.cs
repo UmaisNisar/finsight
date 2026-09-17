@@ -3,11 +3,19 @@ using FinSight.Core.Domain;
 
 namespace FinSight.Core.Insights;
 
+/// <summary>Whether money came in from a merchant or went out to it. The same merchant can do both (an employer that also sells to you).</summary>
+public enum MerchantDirection
+{
+    In,
+    Out,
+}
+
 /// <param name="Ref">Opaque reference ("M1") so the model never sees internal ids.</param>
 /// <param name="SampleDescription">A masked statement descriptor; card and account numbers are already removed.</param>
-public sealed record MerchantCategorizationRequest(string Ref, string MerchantKey, string Merchant, string SampleDescription, string Direction, decimal TypicalAmount, int Occurrences);
+public sealed record MerchantCategorizationRequest(string Ref, string MerchantKey, string Merchant, string SampleDescription, MerchantDirection Direction, decimal TypicalAmount, int Occurrences);
 
-public sealed record MerchantCategorization(string MerchantKey, string CategoryId, TransactionType Type, string? Merchant, double Confidence, string Reason);
+/// <param name="Direction">The direction of the request this answers; it applies only to transactions moving money that way.</param>
+public sealed record MerchantCategorization(string MerchantKey, MerchantDirection Direction, string CategoryId, TransactionType Type, string? Merchant, double Confidence, string Reason);
 
 public sealed record RecurringReviewRequest(string Ref, string Merchant, string Category, decimal Amount, string Frequency, int Occurrences, bool AmountVaries);
 
@@ -57,9 +65,9 @@ public static class MerchantCategorizationValidator
     public const double MinimumConfidence = 0.55;
 
     /// <summary>Categories the model may choose for a given direction of money.</summary>
-    public static IReadOnlyList<CategoryDefinition> AllowedCategories(string direction) =>
+    public static IReadOnlyList<CategoryDefinition> AllowedCategories(MerchantDirection direction) =>
         CategoryTaxonomy.All
-            .Where(c => direction == "in"
+            .Where(c => direction == MerchantDirection.In
                 ? c.Kind is CategoryKind.Income or CategoryKind.Transfer
                 : c.Kind is CategoryKind.Expense or CategoryKind.Transfer)
             .ToList();
@@ -71,7 +79,8 @@ public static class MerchantCategorizationValidator
 
         foreach (var item in raw.Results ?? [])
         {
-            if (item.Ref is null || !byRef.TryGetValue(item.Ref.Trim(), out var request) || results.Any(r => r.MerchantKey == request.MerchantKey))
+            if (item.Ref is null || !byRef.TryGetValue(item.Ref.Trim(), out var request)
+                || results.Any(r => r.MerchantKey == request.MerchantKey && r.Direction == request.Direction))
             {
                 continue;
             }
@@ -97,6 +106,7 @@ public static class MerchantCategorizationValidator
             var reason = item.Reason?.Trim() ?? "Categorized by AI";
             results.Add(new MerchantCategorization(
                 request.MerchantKey,
+                request.Direction,
                 category.Id,
                 category.Kind switch
                 {

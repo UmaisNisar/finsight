@@ -2,7 +2,6 @@ using FinSight.Api.Contracts;
 using FinSight.Api.Middleware;
 using FinSight.Core.Categories;
 using FinSight.Core.Domain;
-using FinSight.Core.Normalization;
 using FinSight.Infrastructure.Insights;
 using FinSight.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
@@ -142,6 +141,12 @@ public sealed class TransactionsController(FinSightDbContext db, DashboardServic
             transaction.IsExcluded = false;
         }
 
+        // Income is money arriving; a payment out can't be income, and would silently vanish from every total.
+        if (request.Type == TransactionType.Income && transaction.Amount < 0)
+        {
+            return ApiErrors.BadRequest("invalid_type", "Money going out can't be marked as income. Mark it as spending or a transfer instead.");
+        }
+
         if (request.CategoryId is not null)
         {
             var category = resolve(request.CategoryId);
@@ -156,7 +161,7 @@ public sealed class TransactionsController(FinSightDbContext db, DashboardServic
             var implied = CategoryTaxonomy.ImpliedType(category, transaction.Amount);
             if (request.Type is null && implied != transaction.EffectiveType)
             {
-                transaction.UserType = implied;
+                transaction.UserType = implied == transaction.Type ? null : implied;
             }
 
             if (request.ApplyToMerchant)
@@ -179,9 +184,18 @@ public sealed class TransactionsController(FinSightDbContext db, DashboardServic
         if (request.Type is not null)
         {
             transaction.UserType = request.Type == transaction.Type ? null : request.Type;
-            if (request.Type == TransactionType.Transfer && request.CategoryId is null)
+            if (request.CategoryId is null)
             {
-                transaction.UserCategoryId = CategoryTaxonomy.Transfers;
+                var current = resolve(transaction.EffectiveCategoryId);
+                if (request.Type == TransactionType.Transfer && current.Kind != CategoryKind.Transfer)
+                {
+                    transaction.UserCategoryId = CategoryTaxonomy.Transfers;
+                }
+                else if (request.Type != TransactionType.Transfer && current.Kind == CategoryKind.Transfer)
+                {
+                    // No longer a transfer, so a transfer category would hide it under "Transfers" in spending.
+                    transaction.UserCategoryId = request.Type == TransactionType.Income ? "income.other" : CategoryTaxonomy.Uncategorized;
+                }
             }
         }
 
@@ -196,7 +210,9 @@ public sealed class TransactionsController(FinSightDbContext db, DashboardServic
 
     private async Task UpsertMerchantRuleAsync(Transaction source, string categoryId, CancellationToken cancellationToken)
     {
-        var key = source.UserMerchant is null ? source.MerchantKey : MerchantNormalizer.KeyOf(source.UserMerchant);
+        // Keyed by the merchant as the bank describes it, which is what future imports are matched on. A key derived
+        // from the user's display name would never match a newly imported transaction.
+        var key = source.MerchantKey;
         var rule = await db.MerchantRules.SingleOrDefaultAsync(r => r.MerchantKey == key, cancellationToken);
         if (rule is null)
         {

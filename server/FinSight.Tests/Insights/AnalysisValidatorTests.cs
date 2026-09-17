@@ -98,9 +98,9 @@ public class AnalysisValidatorTests
     {
         var requests = new[]
         {
-            new MerchantCategorizationRequest("M1", "zxqholdings", "Zxq Holdings", "ZXQ HOLDINGS", "out", 64m, 2),
-            new MerchantCategorizationRequest("M2", "bluecafe", "Blue Cafe", "BLUE CAFE", "out", 8m, 5),
-            new MerchantCategorizationRequest("M3", "acme", "Acme", "ACME", "out", 50m, 1),
+            new MerchantCategorizationRequest("M1", "zxqholdings", "Zxq Holdings", "ZXQ HOLDINGS", MerchantDirection.Out, 64m, 2),
+            new MerchantCategorizationRequest("M2", "bluecafe", "Blue Cafe", "BLUE CAFE", MerchantDirection.Out, 8m, 5),
+            new MerchantCategorizationRequest("M3", "acme", "Acme", "ACME", MerchantDirection.Out, 50m, 1),
         };
         var raw = new RawMerchantCategorizationResponse
         {

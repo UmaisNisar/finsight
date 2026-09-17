@@ -27,6 +27,9 @@ public sealed class DemoDataService(FinSightDbContext db, UserContext userContex
             DisplayName = "Alex",
             IsDemo = true,
             CreatedAt = now,
+
+            // Demo data is already imported and analyzed; there is nothing to onboard.
+            OnboardingCompletedAt = now,
         };
 
         userContext.SetUser(user.Id);

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using FinSight.Api.Auth;
 using FinSight.Api.Controllers;
+using FinSight.Api.Hosting;
 using FinSight.Api.Middleware;
 using FinSight.Infrastructure;
 using FinSight.Infrastructure.Persistence;
@@ -14,6 +15,11 @@ var builder = WebApplication.CreateBuilder(args);
 // Secrets (Google client secret, Gemini API key) come from user secrets in development and
 // environment variables in production. appsettings.Local.json is git-ignored for convenience.
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
+// A relative SQLite path resolves against the app's content root, not whatever directory it was started from,
+// so the database and the Data Protection keys always live side by side.
+var connectionString = SqlitePaths.Resolve(builder.Configuration.GetConnectionString("FinSight") ?? "Data Source=.data/finsight.db", builder.Environment.ContentRootPath);
+builder.Configuration["ConnectionStrings:FinSight"] = connectionString;
 
 builder.Services.AddFinSightInfrastructure(builder.Configuration);
 
@@ -39,29 +45,45 @@ builder.Services
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddFinSightAuthentication(builder.Configuration, builder.Environment);
-builder.Services.AddFinSightRateLimiting();
+builder.Services.AddFinSightRateLimiting(builder.Configuration);
 builder.Services.AddOpenApi();
-builder.Services.Configure<ForwardedHeadersOptions>(options =>
+
+// X-Forwarded-* headers are only honoured behind a reverse proxy the operator opts into. Trusting them from any
+// client would let callers spoof their IP (defeating per-IP rate limits) and the scheme used for secure cookies.
+var trustForwardedHeaders = builder.Configuration.GetValue<bool>("ForwardedHeaders:Enabled");
+if (trustForwardedHeaders)
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
-    options.KnownIPNetworks.Clear();
-    options.KnownProxies.Clear();
-});
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.ForwardLimit = 1;
+
+        // Hosting platforms often proxy from addresses that aren't known ahead of time; list them when they are.
+        var knownProxies = builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [];
+        if (knownProxies.Length == 0)
+        {
+            options.KnownIPNetworks.Clear();
+            options.KnownProxies.Clear();
+        }
+
+        foreach (var proxy in knownProxies)
+        {
+            options.KnownProxies.Add(System.Net.IPAddress.Parse(proxy));
+        }
+    });
+}
 
 var app = builder.Build();
 
 await using (var scope = app.Services.CreateAsyncScope())
 {
-    var connectionString = app.Configuration.GetConnectionString("FinSight") ?? "Data Source=.data/finsight.db";
-    if (connectionString.Contains(".data/", StringComparison.Ordinal))
-    {
-        Directory.CreateDirectory(Path.Combine(app.Environment.ContentRootPath, ".data"));
-    }
-
     await scope.ServiceProvider.GetRequiredService<FinSightDbContext>().Database.MigrateAsync();
 }
 
-app.UseForwardedHeaders();
+if (trustForwardedHeaders)
+{
+    app.UseForwardedHeaders();
+}
 app.UseExceptionHandler();
 
 if (app.Environment.IsDevelopment())

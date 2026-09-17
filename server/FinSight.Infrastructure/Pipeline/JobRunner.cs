@@ -2,6 +2,7 @@ using System.Globalization;
 using FinSight.Core.Abstractions;
 using FinSight.Core.Analytics;
 using FinSight.Core.Domain;
+using FinSight.Core.Statements;
 using FinSight.Infrastructure.Gmail;
 using FinSight.Infrastructure.Insights;
 using FinSight.Infrastructure.Persistence;
@@ -20,13 +21,67 @@ public static class StatementLabels
             return end.ToString("MMMM yyyy", culture);
         }
 
+        if (StatementAlert.IsAlert(statement))
+        {
+            return AlertTitle(statement);
+        }
+
         return statement.ReceivedAt is { } received
             ? $"Received {received.ToString("MMM d, yyyy", culture)}"
             : statement.Filename;
     }
 
+    /// <summary>"CIBC credit card ending 5190", falling back to "CIBC statement", "Credit card ending 5190" or "Statement".</summary>
+    public static string AlertTitle(Statement statement)
+    {
+        var account = AccountLabel(statement.AccountType) ?? (statement.AccountMask is null ? "statement" : "account");
+        var title = statement.Institution is null ? account : $"{statement.Institution} {account}";
+        if (statement.AccountMask is not null)
+        {
+            title += $" ending {statement.AccountMask}";
+        }
+
+        return char.ToUpperInvariant(title[0]) + title[1..];
+    }
+
+    public static string? AccountLabel(AccountType type) => type switch
+    {
+        AccountType.CreditCard => "credit card",
+        AccountType.Chequing => "chequing account",
+        AccountType.Savings => "savings account",
+        AccountType.LineOfCredit => "line of credit",
+        AccountType.Investment => "investment account",
+        _ => null,
+    };
+
     public static string StepLabel(Statement statement) =>
-        statement.Institution is null ? Title(statement) : $"{Title(statement)} · {statement.Institution}";
+        statement.Institution is null || StatementAlert.IsAlert(statement) && statement.PeriodEnd is null
+            ? Title(statement)
+            : $"{Title(statement)} · {statement.Institution}";
+
+    /// <summary>"Found 3 new statements and 2 statement alerts". Alerts are emails saying a statement is ready without attaching it.</summary>
+    public static string SyncDetail(DiscoveryResult result)
+    {
+        if (result.NewStatements == 0 && result.NewAlerts == 0)
+        {
+            return result.TotalStatements == 0 ? "No statements found" : "No new statements";
+        }
+
+        var parts = new List<string>();
+        if (result.NewStatements > 0)
+        {
+            parts.Add(Plural(result.NewStatements, "new statement"));
+        }
+
+        if (result.NewAlerts > 0)
+        {
+            parts.Add(Plural(result.NewAlerts, "statement alert"));
+        }
+
+        return $"Found {string.Join(" and ", parts)}";
+    }
+
+    private static string Plural(int count, string noun) => $"{count} {noun}{(count == 1 ? "" : "s")}";
 
     public static IEnumerable<JobStep> ProcessingPlan(IEnumerable<Statement> statements) =>
         statements.Select(s => new JobStep($"s:{s.Id}", StepLabel(s), StepStatus.Pending))
@@ -93,10 +148,7 @@ public sealed partial class JobRunner(
         await reporter.SetAsync("gmail", "Gmail connected", StepStatus.Done, cancellationToken: cancellationToken);
 
         var result = await discovery.DiscoverAsync(item.UserId, cancellationToken);
-        var detail = result.NewStatements == 0
-            ? result.TotalStatements == 0 ? "No statements found" : "No new statements"
-            : $"{result.NewStatements} new statement{(result.NewStatements == 1 ? "" : "s")} found";
-        await reporter.SetAsync("search", detail, StepStatus.Done, cancellationToken: cancellationToken);
+        await reporter.SetAsync("search", StatementLabels.SyncDetail(result), StepStatus.Done, cancellationToken: cancellationToken);
     }
 
     private async Task RunProcessingAsync(JobWorkItem item, JobReporter reporter, CancellationToken cancellationToken)
@@ -127,8 +179,16 @@ public sealed partial class JobRunner(
                 {
                     case ImportOutcome.Imported:
                         imported.Add(statement);
-                        await reporter.SetAsync(key, label, StepStatus.Done,
-                            $"{result.TransactionCount} transaction{(result.TransactionCount == 1 ? "" : "s")}", cancellationToken);
+                        var detail = $"{result.TransactionCount} transaction{(result.TransactionCount == 1 ? "" : "s")}";
+
+                        // Uploading the PDF a statement alert asked for clears that alert.
+                        if (item.Kind == JobKind.Upload && statement.Source == StatementSourceKind.ManualUpload
+                            && await importer.FulfilAlertAsync(statement, cancellationToken) is not null)
+                        {
+                            detail += " · statement alert cleared";
+                        }
+
+                        await reporter.SetAsync(key, label, StepStatus.Done, detail, cancellationToken);
                         break;
                     case ImportOutcome.DuplicateFile:
                         await reporter.SetAsync(key, label, StepStatus.Skipped, "Already imported", cancellationToken);
@@ -147,7 +207,15 @@ public sealed partial class JobRunner(
             {
                 LogStatementFailed(logger, ex.GetType().Name, statement.Id);
                 db.ChangeTracker.Clear();
-                var fresh = await db.Statements.SingleAsync(s => s.Id == statement.Id, CancellationToken.None);
+
+                // The statement may have been deleted while it was processing; then there is nothing to mark.
+                var fresh = await db.Statements.SingleOrDefaultAsync(s => s.Id == statement.Id, CancellationToken.None);
+                if (fresh is null)
+                {
+                    await reporter.SetAsync(key, label, StepStatus.Skipped, "Statement was deleted", CancellationToken.None);
+                    continue;
+                }
+
                 await importer.FailAsync(fresh, StatementFailure.Unexpected, CancellationToken.None);
                 await reporter.SetAsync(key, label, StepStatus.Failed, StatementFailure.Message(StatementFailure.Unexpected), CancellationToken.None);
             }
@@ -164,7 +232,8 @@ public sealed partial class JobRunner(
             return uploaded;
         }
 
-        if (statement.Source != StatementSourceKind.Gmail)
+        // Uploaded statements, and alerts that never had an attachment, can only be processed from an uploaded file.
+        if (statement.Source != StatementSourceKind.Gmail || StatementAlert.IsAlert(statement))
         {
             await importer.FailAsync(statement, StatementFailure.UploadRequired, cancellationToken);
             return null;
@@ -232,7 +301,7 @@ public sealed partial class JobRunner(
 
     private async Task GenerateInsightsAsync(User user, List<Statement> imported, JobReporter reporter, CancellationToken cancellationToken)
     {
-        if (imported.Count == 0 || !user.Settings.AiInsightsEnabled || !gemini.IsConfigured)
+        if (imported.Count == 0 || !user.Settings.AiInsightsEnabled || !await gemini.IsConfiguredAsync(cancellationToken))
         {
             var reason = imported.Count == 0 ? "No new data" : !user.Settings.AiInsightsEnabled ? "AI insights are turned off" : "AI not configured";
             await reporter.SetAsync("insights", "Generating insights", StepStatus.Skipped, reason, cancellationToken);
@@ -241,7 +310,7 @@ public sealed partial class JobRunner(
 
         await reporter.SetAsync("insights", "Generating insights", StepStatus.Running, cancellationToken: cancellationToken);
 
-        // Analyze the most recent complete month that has data, which is what the overview opens on.
+        // The overview opens on last month, so analyze that when it has data; otherwise the latest month that does.
         var latest = await db.Transactions.MaxAsync(t => (DateOnly?)t.Date, cancellationToken);
         if (latest is null)
         {
@@ -249,8 +318,13 @@ public sealed partial class JobRunner(
             return;
         }
 
-        var month = new DateOnly(latest.Value.Year, latest.Value.Month, 1);
-        var range = new DateRange(month, month.AddMonths(1).AddDays(-1));
+        var today = DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime);
+        var range = PeriodResolver.Resolve(PeriodPreset.LastMonth, today);
+        if (!await db.Transactions.AnyAsync(t => t.Date >= range.Start && t.Date <= range.End, cancellationToken))
+        {
+            var month = new DateOnly(latest.Value.Year, latest.Value.Month, 1);
+            range = new DateRange(month, month.AddMonths(1).AddDays(-1));
+        }
 
         try
         {

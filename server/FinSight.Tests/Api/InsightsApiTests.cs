@@ -1,0 +1,196 @@
+using System.Net;
+using System.Net.Http.Json;
+using FinSight.Core.Abstractions;
+using FinSight.Core.Domain;
+using FinSight.Core.Insights;
+using FinSight.Tests.TestHelpers;
+
+namespace FinSight.Tests.Api;
+
+/// <summary>AI features end to end, with Gemini replaced by a script. Tests in a class run one at a time, so each may set the script.</summary>
+public sealed class InsightsApiTests : IClassFixture<AiApiFactory>
+{
+    private readonly AiApiFactory _factory;
+
+    public InsightsApiTests(AiApiFactory factory)
+    {
+        _factory = factory;
+        var gemini = factory.Gemini;
+        gemini.Categorize = _ => [];
+        gemini.ReviewRecurring = _ => [];
+        gemini.Analyze = facts => new GeminiAnalysisResult(AnalysisValidator.Validate(new RawAnalysis
+        {
+            Summary = $"You spent {facts.Expenses:C} and earned $123,456.",
+            KeyInsights = [new RawInsight { Title = "Rent is your biggest cost", Description = "Housing takes the largest share.", Severity = "info" }],
+        }, facts), "fake-model");
+    }
+
+    [Fact]
+    public async Task Generated_analysis_is_validated_stored_and_goes_stale_when_data_changes()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+
+        var none = await (await client.GetAsync("/api/analysis?period=last-month")).JsonAsync();
+        none.GetProperty("state").GetString().Should().Be("none");
+        none.GetProperty("availability").GetProperty("configured").GetBoolean().Should().BeTrue();
+
+        var generated = await (await client.PostAsync("/api/analysis/generate?period=last-month", null)).JsonAsync();
+        generated.GetProperty("state").GetString().Should().Be("fresh");
+        generated.GetProperty("model").GetString().Should().Be("fake-model");
+        generated.GetProperty("analysis").GetProperty("keyInsights").GetArrayLength().Should().Be(1);
+        // The invented $123,456 matches nothing in the data and is flagged.
+        generated.GetProperty("corrections").EnumerateArray().Should().Contain(c => c.GetProperty("message").GetString()!.Contains("123,456"));
+
+        var facts = _factory.Gemini.AnalysisCalls[^1];
+        facts.ToJson().Should().NotContain("PRE-AUTHORIZED").And.NotContain("4821").And.NotContain("demo@finsight.local");
+
+        (await (await client.GetAsync("/api/analysis?period=last-month")).JsonAsync()).GetProperty("state").GetString().Should().Be("fresh");
+
+        var rent = (await client.TransactionsAsync("categoryId=housing.rent&sort=date-desc"))[0];
+        await client.PatchAsJsonAsync($"/api/transactions/{rent.GetProperty("id").GetString()}", new { isExcluded = true });
+
+        (await (await client.GetAsync("/api/analysis?period=last-month")).JsonAsync()).GetProperty("state").GetString().Should().Be("stale");
+    }
+
+    [Fact]
+    public async Task Analysis_respects_the_users_ai_setting()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        var settings = await (await client.GetAsync("/api/settings")).JsonAsync();
+        await client.PutAsJsonAsync("/api/settings", new
+        {
+            currency = settings.GetProperty("currency").GetString(),
+            dateFormat = settings.GetProperty("dateFormat").GetString(),
+            theme = "system",
+            aiCategorizationEnabled = true,
+            aiInsightsEnabled = false,
+            notificationsEnabled = false,
+        });
+        var calls = _factory.Gemini.AnalysisCalls.Count;
+
+        var response = await client.PostAsync("/api/analysis/generate?period=last-month", null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await response.ErrorCodeAsync()).Should().Be("ai_disabled");
+        _factory.Gemini.AnalysisCalls.Should().HaveCount(calls);
+    }
+
+    [Fact]
+    public async Task Periods_without_data_are_not_sent_to_the_ai()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        var calls = _factory.Gemini.AnalysisCalls.Count;
+
+        var response = await client.PostAsync("/api/analysis/generate?period=custom&from=2001-01-01&to=2001-01-31", null);
+
+        response.StatusCode.Should().Be((HttpStatusCode)422);
+        (await response.ErrorCodeAsync()).Should().Be("not_enough_data");
+        _factory.Gemini.AnalysisCalls.Should().HaveCount(calls);
+    }
+
+    [Theory]
+    [InlineData(AiFailure.RateLimited, 429, "ai_rate_limited")]
+    [InlineData(AiFailure.Timeout, 503, "ai_unavailable")]
+    [InlineData(AiFailure.InvalidResponse, 503, "ai_unavailable")]
+    public async Task Ai_failures_map_to_friendly_errors_and_keep_the_dashboard_working(AiFailure failure, int status, string code)
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        _factory.Gemini.Analyze = _ => throw new AiUnavailableException(failure);
+
+        var response = await client.PostAsync("/api/analysis/generate?period=last-month", null);
+
+        ((int)response.StatusCode).Should().Be(status);
+        (await response.ErrorCodeAsync()).Should().Be(code);
+        (await client.GetAsync("/api/summary?period=last-month")).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await (await client.GetAsync("/api/analysis?period=last-month")).JsonAsync()).GetProperty("state").GetString().Should().Be("none");
+    }
+
+    [Theory]
+    [InlineData("period=next-year")]
+    [InlineData("period=custom&from=2026-05-01")]
+    [InlineData("period=custom&from=2020-01-01&to=2026-01-01")]
+    public async Task Invalid_periods_are_rejected(string query)
+    {
+        var client = await _factory.CreateDemoClientAsync();
+
+        var response = await client.GetAsync($"/api/summary?{query}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.ErrorCodeAsync()).Should().Be("invalid_period");
+    }
+
+    [Fact]
+    public async Task Recurring_payments_are_labelled_by_ai_when_it_answers()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        _factory.Gemini.ReviewRecurring = requests => requests
+            .Where(r => r.Merchant == "Netflix")
+            .Select(r => new RecurringReview(r.Ref, RecurringKind.Habit, "Streaming you might not watch"))
+            .ToList();
+
+        var recurring = await (await client.GetAsync("/api/recurring")).JsonAsync();
+
+        recurring.GetProperty("aiReviewed").GetBoolean().Should().BeTrue();
+        var netflix = recurring.GetProperty("items").EnumerateArray().Single(i => i.GetProperty("merchant").GetString() == "Netflix");
+        netflix.GetProperty("kind").GetString().Should().Be("habit");
+        netflix.GetProperty("kindFromAi").GetBoolean().Should().BeTrue();
+        recurring.GetProperty("annualTotal").GetDecimal().Should().Be(recurring.GetProperty("monthlyTotal").GetDecimal() * 12);
+    }
+
+    [Fact]
+    public async Task Recurring_payments_are_still_detected_when_ai_is_unavailable()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        _factory.Gemini.ReviewRecurring = _ => throw new AiUnavailableException(AiFailure.Unavailable);
+
+        var response = await client.GetAsync("/api/recurring");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var recurring = await response.JsonAsync();
+        recurring.GetProperty("aiReviewed").GetBoolean().Should().BeFalse();
+        recurring.GetProperty("items").EnumerateArray().Should().Contain(i => i.GetProperty("merchant").GetString() == "Netflix" && i.GetProperty("kind").GetString() == "subscription");
+    }
+
+    [Fact]
+    public async Task Ai_review_references_that_do_not_exist_are_ignored()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        _factory.Gemini.ReviewRecurring = _ => [new RecurringReview("R999", RecurringKind.Loan, "Invented"), new RecurringReview("Rx", RecurringKind.Loan, "Garbage")];
+
+        var response = await client.GetAsync("/api/recurring");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.JsonAsync()).GetProperty("items").EnumerateArray().Should().NotContain(i => i.GetProperty("kind").GetString() == "loan");
+    }
+
+    [Fact]
+    public async Task Uploads_send_only_unrecognised_merchants_to_ai_with_masked_descriptions()
+    {
+        var client = await _factory.CreateDemoClientAsync();
+        _factory.Gemini.Categorize = requests => requests.Select(r => r.Direction == MerchantDirection.In
+            ? new MerchantCategorization(r.MerchantKey, r.Direction, "income.freelance", TransactionType.Income, null, 0.9, "Client payment")
+            : new MerchantCategorization(r.MerchantKey, r.Direction, "shopping.general", TransactionType.Expense, null, 0.85, "Online store")).ToList();
+        var calls = _factory.Gemini.CategorizationCalls.Count;
+
+        var statementId = await client.ImportAsync(PdfStatementBuilder.Chequing(2026, 1, 2000m,
+        [
+            (6, "NETFLIX.COM", -20.99m),
+            (8, "ZXQ HOLDINGS REF 4520123456789012", 950m),
+            (14, "ZXQ HOLDINGS REF 4520123456789012", -45m),
+        ]));
+
+        var sent = _factory.Gemini.CategorizationCalls.Skip(calls).SelectMany(c => c).ToList();
+        sent.Should().OnlyContain(r => r.MerchantKey.StartsWith("zxq", StringComparison.Ordinal));
+        sent.Should().HaveCount(2);
+        sent.Should().OnlyContain(r => !r.SampleDescription.Contains("4520123456789012"));
+
+        var transactions = await client.TransactionsAsync($"statementId={statementId}");
+        var payment = transactions.Single(t => t.GetProperty("amount").GetDecimal() == 950m);
+        payment.GetProperty("categoryId").GetString().Should().Be("income.freelance");
+        payment.GetProperty("type").GetString().Should().Be("income");
+        payment.GetProperty("categorySource").GetString().Should().Be("ai");
+        var charge = transactions.Single(t => t.GetProperty("amount").GetDecimal() == -45m);
+        charge.GetProperty("categoryId").GetString().Should().Be("shopping.general");
+        charge.GetProperty("type").GetString().Should().Be("expense");
+    }
+}
