@@ -2,6 +2,7 @@ import { X } from 'lucide-react';
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { IconButton } from './Button';
+import { Tooltip } from './Tooltip';
 
 interface SheetProps {
   open: boolean;
@@ -58,9 +59,17 @@ export function Sheet({ open, onClose, title, subtitle, children, footer, size =
       <div className="sheet-panel glass flex h-full flex-col overflow-hidden rounded-t-[28px] md:rounded-[28px]">
         <header className="flex items-start gap-3 px-5 pt-5 pb-3 md:px-6">
           <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="title-section truncate">
-              {title}
-            </h2>
+            {typeof title === 'string' ? (
+              <Tooltip content={title} onlyWhenTruncated>
+                <h2 id={titleId} className="title-section truncate">
+                  {title}
+                </h2>
+              </Tooltip>
+            ) : (
+              <h2 id={titleId} className="title-section truncate">
+                {title}
+              </h2>
+            )}
             {subtitle && <div className="caption mt-0.5 truncate">{subtitle}</div>}
           </div>
           <IconButton label="Close" onClick={onClose} className="glass-control -mt-1 -mr-2">

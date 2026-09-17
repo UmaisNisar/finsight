@@ -61,6 +61,8 @@
   --rim-shade: rgb(0 0 0 / 0.05);
   --glass-shadow: 0 1px 2px rgb(15 23 42 / 0.03), 0 6px 20px rgb(15 23 42 / 0.04);
   --glass-float: 0 1px 3px rgb(15 23 42 / 0.05), 0 10px 28px rgb(15 23 42 / 0.09);
+  --mat-tooltip: rgb(250 250 252 / 0.94);
+  --tooltip-outline: rgb(0 0 0 / 0.05);
 
   /* A spring (stiffness 420, damping 30) sampled for CSS: quick, with a 2% overshoot. */
   --ease-spring: linear(0, 0.033, 0.113, 0.218, 0.333, 0.449, 0.558, 0.656, 0.741, 0.812, 0.87, 0.916, 0.951, 0.977, 0.996, 1.008, 1.016, 1.02, 1.021, 1.021, 1.02, 1.017, 1.015, 1.013, 1.01, 1.008, 1.006, 1.004, 1.003, 1.002, 1.001, 1);
@@ -114,6 +116,8 @@
     --rim-shade: rgb(0 0 0 / 0.3);
     --glass-shadow: 0 1px 2px rgb(0 0 0 / 0.24), 0 8px 24px rgb(0 0 0 / 0.18);
     --glass-float: 0 1px 3px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.34);
+    --mat-tooltip: rgb(44 44 50 / 0.94);
+    --tooltip-outline: rgb(0 0 0 / 0.55);
   }
 }
 
@@ -164,6 +168,8 @@
   --rim-shade: rgb(0 0 0 / 0.3);
   --glass-shadow: 0 1px 2px rgb(0 0 0 / 0.24), 0 8px 24px rgb(0 0 0 / 0.18);
   --glass-float: 0 1px 3px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.34);
+  --mat-tooltip: rgb(44 44 50 / 0.94);
+  --tooltip-outline: rgb(0 0 0 / 0.55);
 }
 
 /* Registered so the primary button's hover sheen and pressed shade animate (a CSS filter would force a GPU layer). */
@@ -497,6 +503,83 @@
   .tabular {
     font-variant-numeric: tabular-nums;
   }
+
+  /*
+    AnimatedNumber. Each glyph is an inline-block drawn with generated content. A digit's box extends past its line by
+    --numeric-bleed (negative margins keep layout unchanged) and a mask fades the edges of that box, so a digit ticking
+    a quarter em in or out is softened rather than cut. A mask rather than overflow, so glyphs keep their baseline.
+    A digit draws itself twice over the hidden sizer glyph, at exactly its position: the current digit (::before) and,
+    only during a change, the outgoing one (::after).
+  */
+  .numeric {
+    position: relative;
+    display: inline-block;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    font-kerning: none;
+  }
+
+  /* Flex, so a glyph whose width is opening or closing stays centred in it and overflows evenly (then is clipped). */
+  .numeric-glyph {
+    --numeric-bleed: 0.3em;
+    --numeric-side: 0.06em;
+    display: inline-flex;
+    justify-content: center;
+    position: relative;
+    padding: var(--numeric-bleed) var(--numeric-side);
+    margin: calc(-1 * var(--numeric-bleed)) calc(-1 * var(--numeric-side));
+    -webkit-mask-image: linear-gradient(transparent, #000 var(--numeric-bleed), #000 calc(100% - var(--numeric-bleed)), transparent);
+    mask-image: linear-gradient(transparent, #000 var(--numeric-bleed), #000 calc(100% - var(--numeric-bleed)), transparent);
+  }
+
+  .numeric-glyph::after {
+    content: attr(data-char);
+  }
+
+  /* A glyph arriving or leaving never draws over its neighbours while its column is narrower than it. */
+  .numeric-glyph:is([data-phase='entering'], [data-phase='exiting']) {
+    overflow-x: clip;
+  }
+
+  .numeric-digit::after {
+    visibility: hidden;
+  }
+
+  .numeric-pair {
+    position: absolute;
+    inset: var(--numeric-bleed) var(--numeric-side);
+  }
+
+  .numeric-pair::before,
+  .numeric-pair::after {
+    position: absolute;
+    inset: 0;
+    text-align: center;
+  }
+
+  .numeric-pair::before {
+    content: attr(data-a);
+  }
+
+  /* The outgoing digit is only ever seen through its animation, which starts it fully opaque. */
+  .numeric-pair::after {
+    content: attr(data-b);
+    opacity: 0;
+  }
+
+  .numeric-counting > .numeric-glyphs {
+    visibility: hidden;
+  }
+
+  .numeric-count {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+
+  .numeric-count::after {
+    content: attr(data-text);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -629,8 +712,11 @@ dialog[open] > .alert-panel {
   .glass,
   .glass-strong,
   .glass-control,
-  .popup-menu {
+  .popup-menu,
+  .tooltip,
+  .tooltip-surface {
     --material-blur: none;
+    backdrop-filter: none;
     background: var(--surface);
     box-shadow: none;
   }
@@ -638,7 +724,9 @@ dialog[open] > .alert-panel {
   :is(.card, .glass-strong, .glass-control, .popup-menu)::after,
   :is(input, textarea).glass-control,
   .glass,
-  .popup-menu {
+  .popup-menu,
+  .tooltip,
+  .tooltip-surface {
     box-shadow: inset 0 0 0 1px var(--separator);
   }
 
@@ -723,6 +811,73 @@ dialog[open] > .alert-panel {
       opacity: 0;
       transform: scale(0.96);
     }
+  }
+
+  /*
+    Help tags (Tooltip) and chart tooltips share one material: thick glass, a hairline rim and a small neutral
+    shadow, smaller and quieter than a menu.
+  */
+  .tooltip-surface,
+  .tooltip {
+    color: var(--label);
+    background: var(--mat-tooltip);
+    box-shadow:
+      inset 0 1px 0 var(--rim-highlight),
+      inset 0 0 0 0.5px var(--rim-edge),
+      0 0 0 0.5px var(--tooltip-outline),
+      0 2px 10px rgb(0 0 0 / 0.1);
+    backdrop-filter: blur(30px) saturate(190%);
+    -webkit-backdrop-filter: blur(30px) saturate(190%);
+  }
+
+  /* Help tags fade in with a hint of drop toward their anchor and fade out a little faster, like AppKit's. */
+  .tooltip {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    border: 0;
+    width: max-content;
+    max-width: min(17rem, calc(100vw - 16px));
+    padding: 5px 9px;
+    border-radius: 9px;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    letter-spacing: 0;
+    text-wrap: pretty;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(var(--tooltip-shift, -2px));
+    transition:
+      opacity 0.12s ease-in,
+      transform 0.12s ease-in,
+      overlay 0.12s allow-discrete,
+      display 0.12s allow-discrete;
+  }
+
+  .tooltip[data-side='above'] {
+    --tooltip-shift: 2px;
+  }
+
+  .tooltip:popover-open {
+    opacity: 1;
+    transform: none;
+    transition-duration: 0.16s;
+    transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  @starting-style {
+    .tooltip:popover-open {
+      opacity: 0;
+      transform: translateY(var(--tooltip-shift, -2px));
+    }
+  }
+
+  /* An expansion tag sits exactly over the text it completes, so it doesn't move, it only fades. */
+  .tooltip-over {
+    --tooltip-shift: 0px;
+    padding: 1px 8px;
+    border-radius: 7px;
+    max-width: calc(100vw - 16px);
   }
 
   /* Thin, overlay-style scrollbars instead of the platform's chunky default. */

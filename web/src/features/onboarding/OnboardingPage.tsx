@@ -12,11 +12,13 @@ import { useJobs, type UploadItem, type UploadState } from '@/app/providers/Jobs
 import { useToast } from '@/app/providers/ToastProvider';
 import { ProgressChecklist } from '@/components/ProgressChecklist';
 import { UploadProgressList, usePdfPicker, type UploadRowData } from '@/components/UploadProgressList';
+import { AnimatedNumber, formatCount } from '@/components/ui/AnimatedNumber';
 import { AutoHeight, Collapse } from '@/components/ui/AutoHeight';
 import { Button, buttonStyles } from '@/components/ui/Button';
 import { PopUpButton } from '@/components/ui/PopUpButton';
 import { Card, ErrorState, Pill, Skeleton } from '@/components/ui/primitives';
 import { RoundCheckbox } from '@/components/ui/RoundCheckbox';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { GeminiKeyForm } from '@/features/ai/GeminiKeyForm';
 import { StatementAlertList, uploadRows } from '@/features/statements/StatementAlerts';
 import { useGmailReturn } from '@/hooks/useGmailReturn';
@@ -24,6 +26,7 @@ import { usePreferences } from '@/hooks/usePreferences';
 import { useSessionState } from '@/hooks/useSessionState';
 import { useSingleFlight } from '@/hooks/useSingleFlight';
 import { cn } from '@/lib/cn';
+import { CAVEAT_EXPLANATION } from '@/lib/explanations';
 import { formatDate } from '@/lib/format';
 import { gmailConnectUrl, type GmailOutcome } from '@/lib/gmail';
 import { CURRENCY_OPTIONS, DATE_FORMAT_OPTIONS } from '@/lib/preferences';
@@ -252,7 +255,11 @@ function DiscoveredRow({ statement, selected, onToggle, dateFormat }: { statemen
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
             <span className="truncate text-[0.9375rem] font-medium">{discoveredName(statement)}</span>
-            {caveat && <Pill>{caveat}</Pill>}
+            {caveat && (
+              <Tooltip content={CAVEAT_EXPLANATION[caveat]}>
+                <Pill>{caveat}</Pill>
+              </Tooltip>
+            )}
           </span>
           <span className="block truncate text-[0.875rem] text-label-secondary">{statement.subject ?? statement.title}</span>
           <span className="caption block truncate text-label-tertiary">{meta}</span>
@@ -436,7 +443,7 @@ function ImportStep({ view, onStart, onSkip }: { view: ImportView; onStart: () =
 // ---------------------------------------------------------------------------------------------------------------
 // Finish
 
-function Figure({ label, value, detail }: { label: string; value: string; detail?: string }) {
+function Figure({ label, value, detail }: { label: string; value: ReactNode; detail?: string }) {
   return (
     <div className="rounded-[18px] bg-fill/60 px-4 py-3.5">
       <dt className="caption">{label}</dt>
@@ -458,8 +465,8 @@ function FinishStep({ processed, failed, waiting, aiOn, aiDetail, finishing, onF
     <>
       <Lead>{processed.length > 0 ? 'Your overview is ready. Here’s what FinSight set up.' : 'You can add statements anytime from the Statements page.'}</Lead>
       <dl className="mt-5 grid grid-cols-3 gap-2">
-        <Figure label="Statements" value={String(processed.length)} />
-        <Figure label="Transactions" value={transactions.toLocaleString()} />
+        <Figure label="Statements" value={<AnimatedNumber value={processed.length} format={formatCount} countUp />} />
+        <Figure label="Transactions" value={<AnimatedNumber value={transactions} format={formatCount} countUp />} />
         <Figure label="AI" value={aiOn ? 'On' : 'Off'} detail={aiDetail} />
       </dl>
 

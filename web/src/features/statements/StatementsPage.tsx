@@ -15,6 +15,7 @@ import { Collapse } from '@/components/ui/AutoHeight';
 import { Button, buttonStyles } from '@/components/ui/Button';
 import { Card, EmptyState, ErrorState, GroupedList, Skeleton } from '@/components/ui/primitives';
 import { RoundCheckbox } from '@/components/ui/RoundCheckbox';
+import { Tooltip, TruncatedText } from '@/components/ui/Tooltip';
 import { useGmailReturn } from '@/hooks/useGmailReturn';
 import { usePreferences } from '@/hooks/usePreferences';
 import { useSingleFlight } from '@/hooks/useSingleFlight';
@@ -128,7 +129,9 @@ function StatementRow({ statement, dateFormat, selectable, selected, onToggle, o
           <FileText size={19} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[0.9375rem] font-medium">{statement.status === 'discovered' ? discoveredName(statement) : statement.title}</p>
+          <TruncatedText as="p" className="text-[0.9375rem] font-medium">
+            {statement.status === 'discovered' ? discoveredName(statement) : statement.title}
+          </TruncatedText>
           <p className="caption truncate">
             {statement.status === 'discovered' ? `${statement.title} · ${statement.filename}` : `${accountLabel(statement.institution, statement.accountMask)} · ${periodText(statement, dateFormat)}`}
           </p>
@@ -302,9 +305,12 @@ export default function StatementsPage() {
                 title="Ready to analyze"
                 subtitle={`${discovered.length} found in Gmail. Choose which to import.`}
                 action={
-                  <Button disabled={selected.size === 0 || jobs.isActive} loading={process.isPending} onClick={() => void once(() => process.mutateAsync([...selected]))}>
-                    Analyze {selected.size} {selected.size === 1 ? 'statement' : 'statements'}
-                  </Button>
+                  // Disabled by a job running elsewhere (its panel may be hidden), a tag says why. An empty selection needs no tag.
+                  <Tooltip wrap disabled={!jobs.isActive || process.isPending} content="Available when the current import or scan finishes">
+                    <Button disabled={selected.size === 0 || jobs.isActive} loading={process.isPending} onClick={() => void once(() => process.mutateAsync([...selected]))}>
+                      Analyze {selected.size} {selected.size === 1 ? 'statement' : 'statements'}
+                    </Button>
+                  </Tooltip>
                 }
               >
                 {process.isError && (

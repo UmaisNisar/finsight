@@ -98,7 +98,7 @@ export function WelcomePage({ capabilities }: { capabilities: Capabilities }) {
                 Continue with Google
               </a>
             ) : (
-              <Button size="lg" disabled title="Add Google OAuth credentials to the server to enable sign-in">
+              <Button size="lg" disabled>
                 Continue with Google
               </Button>
             )}

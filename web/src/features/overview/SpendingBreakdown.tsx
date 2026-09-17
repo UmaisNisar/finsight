@@ -2,6 +2,7 @@ import { ChevronRight } from 'lucide-react';
 import { Link } from 'react-router';
 import type { Summary } from '@/api/schemas';
 import { WidgetBoundary } from '@/components/errors/WidgetBoundary';
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { Skeleton } from '@/components/ui/primitives';
 import { groupStyle } from '@/lib/categories';
 import { formatMoney, formatPercent } from '@/lib/format';
@@ -104,7 +105,7 @@ function SpendingBreakdownContent({ groups, currency, compareLabel, linkFor }: S
                   )}
                 </span>
               </span>
-              <span className="tabular text-right text-[0.9375rem] font-medium">{formatMoney(row.amount, currency, { whole: true })}</span>
+              <AnimatedNumber className="text-right text-[0.9375rem] font-medium" value={row.amount} format={(amount) => formatMoney(amount, currency, { whole: true })} />
               <span className="w-4 shrink-0" aria-hidden="true" />
             </>
           );

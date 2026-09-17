@@ -6,9 +6,11 @@ import { useAnalysis, useGmail, useSession, useSummary } from '@/api/queries';
 import type { AnalysisResponse, SummaryResponse } from '@/api/schemas';
 import { PageHeader } from '@/components/PageHeader';
 import { PeriodPicker } from '@/components/PeriodPicker';
+import { AnimatedNumber, useRevealedAfterLoading } from '@/components/ui/AnimatedNumber';
 import { buttonStyles } from '@/components/ui/Button';
 import { WidgetBoundary } from '@/components/errors/WidgetBoundary';
 import { Card, EmptyState, ErrorState, Pill, RowSkeleton, SectionHeader, Skeleton } from '@/components/ui/primitives';
+import { TruncatedText } from '@/components/ui/Tooltip';
 import { AiInsightCard, SavingsOpportunities } from '@/features/insights/AiComponents';
 import { usePeriod, usePeriodLink } from '@/hooks/usePeriod';
 import { usePreferences } from '@/hooks/usePreferences';
@@ -46,7 +48,7 @@ function Delta({ value, goodWhenUp, compare }: { value: number | null; goodWhenU
   return (
     <span className={cn('inline-flex min-w-0 items-center gap-0.5 text-[0.8125rem] font-medium whitespace-nowrap', good ? 'text-positive' : 'text-label-secondary')}>
       <Icon size={14} strokeWidth={2.5} className="shrink-0" aria-hidden="true" />
-      {formatPercent(Math.abs(value), { digits: 0 })}
+      <AnimatedNumber value={Math.abs(value)} format={formatWholePercent} />
       <span className="truncate font-normal text-label-secondary">
         &nbsp;vs <Compare {...compare} />
       </span>
@@ -54,13 +56,15 @@ function Delta({ value, goodWhenUp, compare }: { value: number | null; goodWhenU
   );
 }
 
+const formatWholePercent = (value: number) => formatPercent(value, { digits: 0 });
+
 /** One headline figure. With no value it shows placeholders at the exact size of the real text. */
-function Figure({ label, value, children, emphasis }: { label: string; value?: string; children?: ReactNode; emphasis?: boolean }) {
+function Figure({ label, value, children, emphasis }: { label: string; value?: ReactNode; children?: ReactNode; emphasis?: boolean }) {
   return (
     <div className="min-w-0">
       <dt className="eyebrow">{label}</dt>
       <dd className="m-0">
-        <p className={cn('mt-1.5 truncate', emphasis ? 'figure-hero' : 'figure text-[1.75rem] md:text-[2.125rem]')}>
+        <p className={cn('mt-1.5 max-w-full', emphasis ? 'figure-hero' : 'figure text-[1.75rem] md:text-[2.125rem]')}>
           {value ?? <Skeleton className="h-[1em] w-[4.5ch] rounded-xl" />}
         </p>
         <div className="mt-1.5 flex min-h-5 items-center">{value === undefined ? <Skeleton className="h-3 w-24" /> : children}</div>
@@ -79,6 +83,8 @@ function HeroSummary({ data }: { data?: SummaryResponse }) {
   const currency = data?.currency ?? '';
   const compare = data ? compareLabels(data) : { long: '', short: '' };
   const net = summary?.netCashFlow ?? 0;
+  const countUp = useRevealedAfterLoading(data !== undefined);
+  const whole = (amount: number) => formatMoney(amount, currency, { whole: true });
   const footnotes: ReactNode[] = [];
   if (data && summary) {
     if (summary.coverage.isPartial) {
@@ -104,16 +110,19 @@ function HeroSummary({ data }: { data?: SummaryResponse }) {
         Summary
       </h2>
       <dl className="grid grid-cols-2 gap-x-6 gap-y-7 md:grid-cols-4">
-        <Figure label="Income" value={summary && formatMoney(summary.income, currency, { whole: true })}>
+        <Figure label="Income" value={summary && <AnimatedNumber value={summary.income} format={whole} countUp={countUp} />}>
           {summary && <Delta value={summary.previous.hasData ? summary.previous.incomeChangePercent : null} goodWhenUp compare={compare} />}
         </Figure>
-        <Figure label="Spent" value={summary && formatMoney(summary.expenses, currency, { whole: true })}>
+        <Figure label="Spent" value={summary && <AnimatedNumber value={summary.expenses} format={whole} countUp={countUp} />}>
           {summary && <Delta value={summary.previous.hasData ? summary.previous.expenseChangePercent : null} goodWhenUp={false} compare={compare} />}
         </Figure>
-        <Figure label={net >= 0 ? 'Saved' : 'Overspent'} value={summary && formatMoney(Math.abs(net), currency, { whole: true })}>
+        <Figure label={net >= 0 ? 'Saved' : 'Overspent'} value={summary && <AnimatedNumber value={Math.abs(net)} format={whole} countUp={countUp} />}>
           {summary && summary.refunds > 0 && <span className="caption truncate">After {formatMoney(summary.refunds, currency, { whole: true })} in refunds</span>}
         </Figure>
-        <Figure label="Savings rate" value={summary && (summary.savingsRate === null ? '—' : formatPercent(summary.savingsRate))}>
+        <Figure
+          label="Savings rate"
+          value={summary && (summary.savingsRate === null ? '—' : <AnimatedNumber value={summary.savingsRate} format={formatPercent} countUp={countUp} />)}
+        >
           {summary?.savingsRate === null ? (
             <span className="caption">No income recorded</span>
           ) : (
@@ -256,7 +265,9 @@ function Dashboard({ data, analysis, period, pending }: { data?: SummaryResponse
                 <li key={t.id} className="flex items-center gap-3 py-1.5">
                   <CategoryGlyph groupId={groupIdOf(t.categoryId)} size={32} />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[0.9375rem]">{t.merchant}</p>
+                    <TruncatedText as="p" className="text-[0.9375rem]">
+                      {t.merchant}
+                    </TruncatedText>
                     <p className="caption">{formatShortDate(t.date, prefs.dateFormat)}</p>
                   </div>
                   <p className="tabular text-[0.9375rem] font-medium">{formatMoney(t.amount, currency)}</p>
@@ -276,8 +287,12 @@ function Dashboard({ data, analysis, period, pending }: { data?: SummaryResponse
                   <li key={a.transactionId} className="flex items-center gap-3 py-1.5">
                     <CategoryGlyph groupId={groupIdOf(a.categoryId)} size={32} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[0.9375rem]">{a.merchant}</p>
-                      <p className="caption truncate">{anomalyReason(a, currency)}</p>
+                      <TruncatedText as="p" className="text-[0.9375rem]">
+                        {a.merchant}
+                      </TruncatedText>
+                      <TruncatedText as="p" className="caption">
+                        {anomalyReason(a, currency)}
+                      </TruncatedText>
                     </div>
                     <Pill tone="attention">{formatMoney(a.amount, currency, { whole: true })}</Pill>
                   </li>

@@ -7,6 +7,7 @@ import type { Analysis, AnalysisResponse, SummaryResponse } from '@/api/schemas'
 import { PageHeader } from '@/components/PageHeader';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { WidgetBoundary } from '@/components/errors/WidgetBoundary';
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
 import { buttonStyles } from '@/components/ui/Button';
 import { Card, EmptyState, ErrorState, RowSkeleton, SectionHeader, Skeleton } from '@/components/ui/primitives';
 import { usePeriod, usePeriodLink } from '@/hooks/usePeriod';
@@ -18,6 +19,8 @@ import { anomalyReason, FREQUENCY_LABEL } from '@/lib/labels';
 import { trailingMonths, type PeriodSelection } from '@/lib/period';
 import { AiInsightCard, AnalysisCorrections, SavingsOpportunities } from './AiComponents';
 import { SavingsRateChart } from './SavingsRateChart';
+
+const wholePercent = (value: number) => formatPercent(value, { digits: 0 });
 
 const SEVERITY = {
   positive: { icon: ThumbsUp, className: 'bg-positive-soft text-positive', label: 'Good news' },
@@ -89,6 +92,7 @@ function Body({ data, analysis, period, currency, dateFormat }: { data?: Summary
     .slice(0, 5);
   const recurring = (data?.recurring ?? []).filter((r) => !r.isIncome).slice(0, 6);
   const maxCategory = data?.summary.categories[0]?.amount || 1;
+  const whole = (amount: number) => formatMoney(amount, currency, { whole: true });
 
   return (
     <div className="space-y-10">
@@ -112,7 +116,10 @@ function Body({ data, analysis, period, currency, dateFormat }: { data?: Summary
           title="Where your money goes"
           subtitle={
             data ? (
-              `${formatMoney(data.summary.expenses, currency, { whole: true })} spent · ${formatMoney(data.summary.fixedExpenses, currency, { whole: true })} fixed, ${formatMoney(data.summary.variableExpenses, currency, { whole: true })} flexible`
+              <>
+                <AnimatedNumber value={data.summary.expenses} format={whole} /> spent · <AnimatedNumber value={data.summary.fixedExpenses} format={whole} /> fixed,{' '}
+                <AnimatedNumber value={data.summary.variableExpenses} format={whole} /> flexible
+              </>
             ) : (
               <Skeleton className="my-[0.2em] h-[1em] w-64" />
             )
@@ -128,7 +135,7 @@ function Body({ data, analysis, period, currency, dateFormat }: { data?: Summary
                       {c.name}
                       <span className="caption"> · {c.groupName}</span>
                     </span>
-                    <span className="tabular text-[0.9375rem] font-medium">{formatMoney(c.amount, currency, { whole: true })}</span>
+                    <AnimatedNumber className="text-[0.9375rem] font-medium" value={c.amount} format={whole} />
                   </div>
                   <div className="mt-1.5 flex items-center gap-3">
                     <div className="h-2 flex-1 overflow-hidden rounded-full bg-fill">
@@ -137,7 +144,9 @@ function Body({ data, analysis, period, currency, dateFormat }: { data?: Summary
                         style={{ width: `${(c.amount / maxCategory) * 100}%`, background: groupStyle(c.groupId).color }}
                       />
                     </div>
-                    <span className="caption tabular w-10 text-right">{formatPercent(c.sharePercent, { digits: 0 })}</span>
+                    <span className="caption w-10 text-right">
+                      <AnimatedNumber value={c.sharePercent} format={wholePercent} />
+                    </span>
                   </div>
                 </Link>
               </li>

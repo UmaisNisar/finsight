@@ -1,5 +1,5 @@
 import { AlertCircle, RotateCw } from 'lucide-react';
-import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
+import type { CSSProperties, HTMLAttributes, ReactNode, Ref } from 'react';
 import { cn } from '@/lib/cn';
 import { Button } from './Button';
 
@@ -116,9 +116,10 @@ const toneClasses: Record<Tone, string> = {
   accent: 'bg-accent-soft text-accent',
 };
 
-export function Pill({ tone = 'neutral', children, icon }: { tone?: Tone; children: ReactNode; icon?: ReactNode }) {
+/** Extra attributes and a ref pass through, so a pill can carry a help tag (see Tooltip). */
+export function Pill({ tone = 'neutral', children, icon, className, ...rest }: { tone?: Tone; children: ReactNode; icon?: ReactNode } & HTMLAttributes<HTMLSpanElement> & { ref?: Ref<HTMLSpanElement> }) {
   return (
-    <span className={cn('inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-[0.75rem] font-medium whitespace-nowrap', toneClasses[tone])}>
+    <span {...rest} className={cn('inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-[0.75rem] font-medium whitespace-nowrap', toneClasses[tone], className)}>
       {icon}
       {children}
     </span>

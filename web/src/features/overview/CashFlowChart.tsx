@@ -20,7 +20,7 @@ function ChartTooltip({ active, payload, currency }: Partial<TooltipContentProps
   const net = point.income - point.spending;
 
   return (
-    <div className="glass min-w-44 rounded-2xl px-3.5 py-2.5 text-[0.8125rem]">
+    <div className="tooltip-surface min-w-44 rounded-xl px-3 py-2 text-[0.75rem] leading-[1.35]">
       <p className="mb-1.5 font-semibold">{formatMonthYear(point.month)}</p>
       {point.hasData ? (
         <dl className="tabular space-y-1">

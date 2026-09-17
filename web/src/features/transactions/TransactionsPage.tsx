@@ -8,15 +8,18 @@ import { useCategories, useHasAnyData, useSummary, useTransactions } from '@/api
 import type { Transaction } from '@/api/schemas';
 import { PageHeader } from '@/components/PageHeader';
 import { PeriodPicker } from '@/components/PeriodPicker';
+import { AnimatedNumber, formatCount } from '@/components/ui/AnimatedNumber';
 import { Collapse } from '@/components/ui/AutoHeight';
 import { Button } from '@/components/ui/Button';
 import { PopUpButton } from '@/components/ui/PopUpButton';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Card, EmptyState, ErrorState, GroupedList, RowSkeleton, Skeleton } from '@/components/ui/primitives';
+import { Tooltip, TruncatedText } from '@/components/ui/Tooltip';
 import { usePeriod } from '@/hooks/usePeriod';
 import { usePreferences } from '@/hooks/usePreferences';
 import { cn } from '@/lib/cn';
 import { CategoryGlyph } from '@/lib/categories';
+import { AI_CATEGORY_EXPLANATION } from '@/lib/explanations';
 import { accountLabel, formatDate, formatMoney } from '@/lib/format';
 import { TransactionEditor } from './TransactionEditor';
 
@@ -52,7 +55,9 @@ function TransactionRow({ transaction, onOpen }: { transaction: Transaction; onO
       <button type="button" onClick={onOpen} className="flex w-full items-center gap-3.5 px-4 py-3 text-left transition-colors hover:bg-fill focus-visible:bg-fill md:px-5">
         <CategoryGlyph groupId={transaction.groupId} type={transaction.type} size={38} />
         <div className={cn('min-w-0 flex-1', muted && 'opacity-55')}>
-          <p className="truncate text-[0.9375rem] font-medium">{transaction.merchant}</p>
+          <TruncatedText as="p" className="text-[0.9375rem] font-medium">
+            {transaction.merchant}
+          </TruncatedText>
           <p className="caption truncate">
             {isTransfer ? 'Transfer' : transaction.categoryName}
             {transaction.isRefund && ' · Refund'}
@@ -66,7 +71,11 @@ function TransactionRow({ transaction, onOpen }: { transaction: Transaction; onO
             {isTransfer && <ArrowLeftRight size={13} className="mr-1 inline align-[-1px]" aria-hidden="true" />}
             {formatMoney(transaction.amount, transaction.currency, { signed: transaction.amount > 0 })}
           </p>
-          {transaction.categorySource === 'ai' && <p className="caption">AI categorized</p>}
+          {transaction.categorySource === 'ai' && (
+            <Tooltip content={AI_CATEGORY_EXPLANATION}>
+              <p className="caption ml-auto w-fit">AI categorized</p>
+            </Tooltip>
+          )}
         </div>
       </button>
     </li>
@@ -148,6 +157,7 @@ export default function TransactionsPage() {
   const loading = transactions.isPending && !noData;
   const refreshing = transactions.isPlaceholderData || periodSummary.isPlaceholderData || (search !== deferredSearch && !loading);
   const currency = periodSummary.data?.currency ?? prefs.currency;
+  const whole = (amount: number) => formatMoney(amount, currency, { whole: true });
 
   const categoryName = categoryId
     ? categories.data?.flatMap((g) => g.categories).find((c) => c.id === categoryId)?.name
@@ -194,6 +204,8 @@ export default function TransactionsPage() {
               className="glass-control h-10 w-full rounded-full pr-3 pl-10 text-[0.9375rem] placeholder:text-label-tertiary"
             />
           </label>
+          {/* On narrow windows the button is icon-only; its label comes back as a help tag. */}
+          <Tooltip content="Filters" describe={false} when={(button) => button.querySelector('[data-filters-label]')?.getClientRects().length === 0}>
           <Button
             variant="secondary"
             aria-expanded={showFilters}
@@ -202,9 +214,12 @@ export default function TransactionsPage() {
             icon={<SlidersHorizontal size={16} aria-hidden="true" />}
             onClick={() => setShowFilters((s) => !s)}
           >
-            <span className="hidden sm:inline">Filters</span>
+            <span data-filters-label="" className="hidden sm:inline">
+              Filters
+            </span>
             {activeFilterCount > 0 && <span className="min-w-5 rounded-full bg-accent px-1.5 text-[0.75rem] text-accent-contrast">{activeFilterCount}</span>}
           </Button>
+          </Tooltip>
         </div>
 
         <SegmentedControl label="Transaction type" size="sm" value={typeFilter} onChange={(value) => updateParams({ type: value === 'all' ? '' : value })} options={[...TYPES]} />
@@ -269,8 +284,13 @@ export default function TransactionsPage() {
           !transactions.isPending &&
           !transactions.isError && (
             <span className="fade-in">
-              {first.total} {first.total === 1 ? 'transaction' : 'transactions'}
-              {first.total > 0 && ` · ${formatMoney(first.moneyIn, currency, { whole: true })} in · ${formatMoney(first.moneyOut, currency, { whole: true })} out`}
+              <AnimatedNumber value={first.total} format={formatCount} /> {first.total === 1 ? 'transaction' : 'transactions'}
+              {first.total > 0 && (
+                <>
+                  {' · '}
+                  <AnimatedNumber value={first.moneyIn} format={whole} /> in · <AnimatedNumber value={first.moneyOut} format={whole} /> out
+                </>
+              )}
             </span>
           )
         )}

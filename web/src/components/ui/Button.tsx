@@ -1,6 +1,7 @@
 import { Loader2 } from 'lucide-react';
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react';
 import { cn } from '@/lib/cn';
+import { Tooltip } from './Tooltip';
 
 type Variant = 'primary' | 'secondary' | 'plain' | 'tinted' | 'destructive' | 'destructive-plain';
 type Size = 'sm' | 'md' | 'lg';
@@ -47,12 +48,13 @@ export function Button({ variant = 'primary', size = 'md', loading, icon, classN
   );
 }
 
-export function IconButton({ label, className, children, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+/** An icon-only button. Its label is its accessible name and, on hover or keyboard focus, a help tag. */
+export function IconButton({ label, className, children, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; ref?: Ref<HTMLButtonElement> }) {
   return (
+    <Tooltip content={label} describe={false}>
     <button
       type="button"
       aria-label={label}
-      title={label}
       className={cn(
         'inline-flex size-9 items-center justify-center rounded-full text-label-secondary transition-[background-color,color,transform] duration-200 hover:bg-fill hover:text-label active:scale-[0.94]',
         className,
@@ -61,5 +63,6 @@ export function IconButton({ label, className, children, ...props }: ButtonHTMLA
     >
       {children}
     </button>
+    </Tooltip>
   );
 }

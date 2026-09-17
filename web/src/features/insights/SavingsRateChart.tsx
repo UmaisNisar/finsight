@@ -16,7 +16,7 @@ function RateTooltip({ active, payload }: Partial<TooltipContentProps<number, st
   const point = payload?.[0]?.payload as Point | undefined;
   if (!active || !point) return null;
   return (
-    <div className="glass rounded-2xl px-3.5 py-2.5 text-[0.8125rem]">
+    <div className="tooltip-surface rounded-xl px-3 py-2 text-[0.75rem] leading-[1.35]">
       <p className="font-semibold">{formatMonthYear(point.month)}</p>
       <p className="tabular text-label-secondary">{point.rate === null ? 'No income recorded' : `Saved ${formatPercent(point.rate)} of income`}</p>
     </div>

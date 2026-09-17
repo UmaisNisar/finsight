@@ -4,7 +4,9 @@ import { errorMessage } from '@/api/client';
 import { useHasAnyData, useRecurring } from '@/api/queries';
 import type { Recurring } from '@/api/schemas';
 import { PageHeader } from '@/components/PageHeader';
+import { AnimatedNumber, useRevealedAfterLoading } from '@/components/ui/AnimatedNumber';
 import { Card, EmptyState, ErrorState, GroupedList, RowSkeleton, Skeleton } from '@/components/ui/primitives';
+import { TruncatedText } from '@/components/ui/Tooltip';
 import { usePreferences } from '@/hooks/usePreferences';
 import { cn } from '@/lib/cn';
 import { CategoryGlyph, groupIdOf } from '@/lib/categories';
@@ -25,7 +27,9 @@ function RecurringRow({ item, currency, dateFormat }: { item: Recurring; currenc
     <li className={cn('flex items-center gap-3.5 px-4 py-3 md:px-5', !item.isActive && 'opacity-55')}>
       <CategoryGlyph groupId={item.isIncome ? 'income' : groupIdOf(item.categoryId)} type={item.isIncome ? 'income' : 'expense'} size={38} />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[0.9375rem] font-medium">{item.merchant}</p>
+        <TruncatedText as="p" className="text-[0.9375rem] font-medium">
+          {item.merchant}
+        </TruncatedText>
         <p className="caption truncate">
           {FREQUENCY_LABEL[item.frequency]}
           {item.amountVaries && ' · amount varies'}
@@ -43,13 +47,19 @@ function RecurringRow({ item, currency, dateFormat }: { item: Recurring; currenc
   );
 }
 
-function Total({ label, value, hero, suffix, className }: { label: string; value?: string; hero?: boolean; suffix?: ReactNode; className?: string }) {
+function Total({ label, value, hero, suffix, className, currency, countUp }: { label: string; value?: number; hero?: boolean; suffix?: ReactNode; className?: string; currency: string; countUp: boolean }) {
   return (
     <div className={className}>
       <p className="eyebrow">{label}</p>
       <p className={cn('mt-1.5', hero ? 'figure-hero' : 'figure text-[1.75rem]')}>
-        {value ?? <Skeleton className="h-[1em] w-[4.5ch] rounded-xl" />}
-        {value && suffix}
+      {value === undefined ? (
+        <Skeleton className="h-[1em] w-[4.5ch] rounded-xl" />
+      ) : (
+        <>
+          <AnimatedNumber value={value} format={(amount) => formatMoney(amount, currency, { whole: true })} countUp={countUp && hero} />
+          {suffix}
+        </>
+      )}
       </p>
     </div>
   );
@@ -89,6 +99,7 @@ export default function RecurringPage() {
     .filter((i) => i.isActive && !i.isIncome && i.nextExpectedDate >= today && i.nextExpectedDate <= in30)
     .sort((a, b) => a.nextExpectedDate.localeCompare(b.nextExpectedDate));
 
+  const countUp = useRevealedAfterLoading(data !== undefined);
   const noData = useHasAnyData() === false;
   // Known empty before the list arrives when the account has nothing imported, so no skeleton collapses into the empty card.
   const empty = data ? data.items.length === 0 : noData;
@@ -112,12 +123,14 @@ export default function RecurringPage() {
       ) : (
         <div className="space-y-8">
           <Card className="grid gap-6 p-6 sm:grid-cols-3 md:p-8" aria-label="Recurring totals" aria-busy={!data}>
-            <Total label="Every month" hero value={data && formatMoney(data.monthlyTotal, currency, { whole: true })} />
-            <Total label="Per year" className="sm:pt-6" value={data && formatMoney(data.annualTotal, currency, { whole: true })} />
+            <Total label="Every month" hero value={data?.monthlyTotal} currency={currency} countUp={countUp} />
+            <Total label="Per year" className="sm:pt-6" value={data?.annualTotal} currency={currency} countUp={countUp} />
             <Total
               label="Subscriptions"
               className="sm:pt-6"
-              value={data && formatMoney(data.monthlySubscriptions, currency, { whole: true })}
+              value={data?.monthlySubscriptions}
+              currency={currency}
+              countUp={countUp}
               suffix={<span className="text-[1rem] font-normal text-label-secondary">/mo</span>}
             />
             {data?.aiReviewed && <p className="caption fade-in sm:col-span-3">Detected from your transaction history. Labels such as subscription or bill were suggested by AI.</p>}
@@ -138,7 +151,9 @@ export default function RecurringPage() {
                       {upcoming.map((item) => (
                         <li key={item.merchantKey} className="card w-44 shrink-0 p-4">
                           <CategoryGlyph groupId={groupIdOf(item.categoryId)} size={32} />
-                          <p className="mt-3 truncate text-[0.9375rem] font-medium">{item.merchant}</p>
+                          <TruncatedText as="p" className="mt-3 text-[0.9375rem] font-medium">
+                            {item.merchant}
+                          </TruncatedText>
                           <p className="caption">{formatShortDate(item.nextExpectedDate, prefs.dateFormat)}</p>
                           <p className="tabular mt-2 text-[1.0625rem] font-semibold">{formatMoney(item.amount, currency)}</p>
                         </li>
