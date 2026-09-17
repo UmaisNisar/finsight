@@ -9,7 +9,7 @@
 # build machine's architecture and cross-publish for the target one, so multi-arch builds need no emulation.
 
 # ---- Web app: static files only, identical on every architecture ----------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS web
+FROM --platform=$BUILDPLATFORM node:26-bookworm-slim@sha256:cd9f682fa2885cd1056e830424764158570061c59736a1da836bc3d73df095ae AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
