@@ -6,6 +6,7 @@ using FinSight.Core.Categories;
 using FinSight.Core.Insights;
 using FinSight.Infrastructure.Insights;
 using FinSight.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +14,8 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace FinSight.Api.Controllers;
 
+// Also enforced by the fallback policy; explicit so every endpoint here visibly requires a signed-in user.
+[Authorize]
 [ApiController]
 [Route("api")]
 public sealed class InsightsController(FinSightDbContext db, DashboardService dashboard, AnalysisService analysis, IGeminiService gemini) : ControllerBase

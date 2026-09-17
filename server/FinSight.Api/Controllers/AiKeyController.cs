@@ -5,6 +5,7 @@ using FinSight.Core.Domain;
 using FinSight.Infrastructure.Gemini;
 using FinSight.Infrastructure.Persistence;
 using FinSight.Infrastructure.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -16,6 +17,8 @@ namespace FinSight.Api.Controllers;
 /// The user's own Gemini API key. It is checked with Google before it is saved, stored encrypted, and never returned,
 /// logged or placed in an error. Without one, AI features use the server key when there is one.
 /// </summary>
+// Also enforced by the fallback policy; explicit so every endpoint here visibly requires a signed-in user.
+[Authorize]
 [ApiController]
 [Route("api/ai/key")]
 public sealed class AiKeyController(FinSightDbContext db, IOptions<GeminiOptions> options) : ControllerBase

@@ -1,9 +1,12 @@
 using FinSight.Api.Contracts;
 using FinSight.Core.Statements;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FinSight.Api.Controllers;
 
+// Also enforced by the fallback policy; explicit so every endpoint here visibly requires a signed-in user.
+[Authorize]
 [ApiController]
 [Route("api/institutions")]
 public sealed class InstitutionsController : ControllerBase

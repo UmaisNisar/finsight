@@ -4,6 +4,7 @@ using FinSight.Core.Categories;
 using FinSight.Core.Domain;
 using FinSight.Infrastructure.Insights;
 using FinSight.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -31,6 +32,8 @@ public sealed class TransactionQuery
     public int PageSize { get; set; } = 50;
 }
 
+// Also enforced by the fallback policy; explicit so every endpoint here visibly requires a signed-in user.
+[Authorize]
 [ApiController]
 [Route("api/transactions")]
 public sealed class TransactionsController(FinSightDbContext db, DashboardService dashboard, TimeProvider time) : ControllerBase

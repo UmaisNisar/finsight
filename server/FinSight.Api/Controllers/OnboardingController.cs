@@ -1,9 +1,12 @@
 using FinSight.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace FinSight.Api.Controllers;
 
+// Also enforced by the fallback policy; explicit so every endpoint here visibly requires a signed-in user.
+[Authorize]
 [ApiController]
 [Route("api/onboarding")]
 public sealed class OnboardingController(FinSightDbContext db, TimeProvider time) : ControllerBase
