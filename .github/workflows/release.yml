@@ -47,18 +47,25 @@ jobs:
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      - name: Short commit
+        id: commit
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: echo "short=${HEAD_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         env:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
-          # Read the commit from the checkout: for workflow_run events github.sha is the default branch's latest commit.
-          context: git
+          # The checkout is a detached HEAD, which the "git" context can't read, and for workflow_run events github.sha is
+          # the default branch's latest commit rather than the one CI tested. So the commit is passed in explicitly.
+          context: workflow
           images: ${{ env.IMAGE }}
           flavor: latest=false
           tags: |
-            type=sha,prefix=sha-,format=short
+            type=raw,value=sha-${{ steps.commit.outputs.short }}
             type=raw,value=main,enable=${{ env.IS_MAIN }}
             type=raw,value=latest,enable=${{ env.IS_MAIN }}
             type=semver,pattern={{version}},value=${{ github.event.workflow_run.head_branch }},enable=${{ env.IS_TAG }}
@@ -66,6 +73,7 @@ jobs:
           labels: |
             org.opencontainers.image.title=FinSight
             org.opencontainers.image.description=AI personal finance analyzer: bank statements in, explained spending out.
+            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
 
       # Scan before publishing: build the amd64 image into the local Docker engine first. Layers are shared with the
       # multi-arch build below through the GitHub Actions cache.
