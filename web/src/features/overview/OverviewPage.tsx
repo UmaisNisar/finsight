@@ -11,7 +11,7 @@ import { buttonStyles } from '@/components/ui/Button';
 import { WidgetBoundary } from '@/components/errors/WidgetBoundary';
 import { Card, EmptyState, ErrorState, Pill, RowSkeleton, SectionHeader, Skeleton } from '@/components/ui/primitives';
 import { TruncatedText } from '@/components/ui/Tooltip';
-import { AiInsightCard, SavingsOpportunities } from '@/features/insights/AiComponents';
+import { SavingsOpportunities } from '@/features/insights/AiComponents';
 import { usePeriod, usePeriodLink } from '@/hooks/usePeriod';
 import { usePreferences } from '@/hooks/usePreferences';
 import { cn } from '@/lib/cn';
@@ -228,8 +228,6 @@ function Dashboard({ data, analysis, period, pending }: { data?: SummaryResponse
   return (
     <div className="space-y-6" data-pending={pending} aria-busy={!data || pending}>
       <HeroSummary data={data} />
-
-      <AiInsightCard period={period} hasData compact insightsLink={periodLink('/insights')} />
 
       <div className="grid gap-6 lg:grid-cols-5">
         <Card className="p-6 lg:col-span-3" aria-labelledby="cashflow-title">

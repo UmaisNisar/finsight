@@ -65,14 +65,14 @@ function InsightSkeleton() {
   );
 }
 
-type AiInsightCardProps = { period: PeriodSelection; hasData: boolean; compact?: boolean; insightsLink?: string };
+type AiInsightCardProps = { period: PeriodSelection; hasData: boolean };
 
 const INSIGHT_CARD = 'card p-6 md:p-7';
 
-function InsightTitle({ id, compact }: { id?: string; compact: boolean }) {
+function InsightTitle({ id }: { id?: string }) {
   return (
     <h2 id={id} className="text-[1.0625rem] font-semibold tracking-[-0.01em]">
-      {compact ? 'Insight' : 'Financial summary'}
+      Financial summary
     </h2>
   );
 }
@@ -83,7 +83,6 @@ function InsightTitle({ id, compact }: { id?: string; compact: boolean }) {
  * If it fails to render, the same shell shows a short message with Try again, and the page around it carries on.
  */
 export function AiInsightCard(props: AiInsightCardProps) {
-  const compact = props.compact ?? false;
   return (
     <WidgetBoundary
       name="ai-insight"
@@ -93,10 +92,10 @@ export function AiInsightCard(props: AiInsightCardProps) {
       queryKeys={[['analysis']]}
       resetKeys={[props.period]}
       shell={(fallback) => (
-        <section aria-label={compact ? 'Insight' : 'Financial summary'} className={INSIGHT_CARD}>
+        <section aria-label="Financial summary" className={INSIGHT_CARD}>
           <div className="mb-3 flex items-center gap-3">
             <AiMark />
-            <InsightTitle compact={compact} />
+            <InsightTitle />
           </div>
           {fallback}
         </section>
@@ -128,7 +127,7 @@ export function builtInNote(data: Pick<AnalysisResponse, 'fallbackReason' | 'ava
   }
 }
 
-function AiInsightCardContent({ period, hasData, compact = false, insightsLink = '/insights' }: AiInsightCardProps) {
+function AiInsightCardContent({ period, hasData }: AiInsightCardProps) {
   const analysis = useAnalysis(period);
   const generate = useGenerateAnalysis(period);
   // Read from the cache only: the app shell has already loaded the session. Demo accounts can't add a key.
@@ -169,7 +168,7 @@ function AiInsightCardContent({ period, hasData, compact = false, insightsLink =
       const note = builtIn ? builtInNote(data) : null;
       return (
         <div className="fade-in">
-          <p className={cn('text-pretty text-label', compact ? 'text-[1.0625rem] leading-relaxed' : 'text-[1.125rem] leading-relaxed')}>{data.analysis.summary}</p>
+          <p className="text-[1.125rem] leading-relaxed text-pretty text-label">{data.analysis.summary}</p>
           {note && (
             <p className="mt-3 text-[0.875rem] text-label-secondary">
               {note.text}
@@ -191,11 +190,6 @@ function AiInsightCardContent({ period, hasData, compact = false, insightsLink =
             </p>
           )}
           <div className="mt-5 flex flex-wrap items-center gap-2">
-            {compact && (
-              <Link to={insightsLink} className={buttonStyles({ variant: 'tinted', size: 'sm' })}>
-                See full analysis
-              </Link>
-            )}
             {!builtIn ? (
               <Button variant={data.state === 'stale' ? 'secondary' : 'plain'} size="sm" icon={<RefreshCw size={14} aria-hidden="true" />} onClick={analyze}>
                 Regenerate
@@ -244,7 +238,7 @@ function AiInsightCardContent({ period, hasData, compact = false, insightsLink =
       <div>
         <div className="mb-3 flex items-center gap-3">
           <AiMark />
-          <InsightTitle id={titleId} compact={compact} />
+          <InsightTitle id={titleId} />
           {data?.generatedAt && !generate.isPending && <span className="caption fade-in ml-auto hidden sm:inline">Generated {formatRelativeTime(data.generatedAt)}</span>}
         </div>
 
