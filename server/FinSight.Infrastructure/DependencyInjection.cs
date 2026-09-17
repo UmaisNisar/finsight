@@ -56,7 +56,7 @@ public static class DependencyInjection
         services.AddScoped<IGeminiKeyResolver, GeminiKeyResolver>();
         services.AddScoped<IGeminiService, GeminiService>();
 
-        services.AddSingleton<JobQueue>();
+        services.AddSingleton(_ => new JobQueue(configuration.GetValue("Uploads:MaxQueuedMegabytes", JobQueue.DefaultMaxQueuedUploadBytes / (1024 * 1024)) * 1024 * 1024));
         services.AddHostedService<JobWorker>();
         services.AddHostedService<DemoCleanupService>();
 

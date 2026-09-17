@@ -40,6 +40,9 @@ public static class ApiErrors
         AnalysisUnavailableException { Reason: AnalysisUnavailableReason.NotEnoughData } => Problem(StatusCodes.Status422UnprocessableEntity, "not_enough_data", "There are no transactions in this period to analyze."),
         AiUnavailableException { Failure: AiFailure.RateLimited } => Problem(StatusCodes.Status429TooManyRequests, "ai_rate_limited", "AI analysis is busy right now. Try again in a minute."),
         AiUnavailableException => Problem(StatusCodes.Status503ServiceUnavailable, "ai_unavailable", "AI analysis is temporarily unavailable. Your transaction data is still available."),
+        // Thrown by the server while reading the body, for example past a request size limit.
+        BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge } => Problem(StatusCodes.Status413PayloadTooLarge, "request_too_large", "That request is too large."),
+        BadHttpRequestException => Problem(StatusCodes.Status400BadRequest, "invalid_request", "That request wasn't valid."),
         ArgumentException => Problem(StatusCodes.Status400BadRequest, "invalid_request", "That request wasn't valid."),
         UnauthorizedAccessException => Problem(StatusCodes.Status403Forbidden, "forbidden", "You don't have access to that."),
         _ => Problem(StatusCodes.Status500InternalServerError, "unexpected", "Something went wrong on our side. Try again."),

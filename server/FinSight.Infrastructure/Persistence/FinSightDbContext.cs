@@ -11,6 +11,7 @@ public sealed class FinSightDbContext(
     IFieldProtector fieldProtector) : DbContext(options)
 {
     public DbSet<User> Users => Set<User>();
+    public DbSet<UserSession> UserSessions => Set<UserSession>();
     public DbSet<GmailConnection> GmailConnections => Set<GmailConnection>();
     public DbSet<Statement> Statements => Set<Statement>();
     public DbSet<Transaction> Transactions => Set<Transaction>();
@@ -52,6 +53,13 @@ public sealed class FinSightDbContext(
                 s.Property(p => p.DateFormat).HasMaxLength(32);
             });
             e.HasQueryFilter(u => IsSystem || u.Id == CurrentUserId);
+        });
+
+        modelBuilder.Entity<UserSession>(e =>
+        {
+            e.HasIndex(s => s.UserId);
+            e.HasOne<User>().WithMany().HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasQueryFilter(s => IsSystem || s.UserId == CurrentUserId);
         });
 
         modelBuilder.Entity<GmailConnection>(e =>

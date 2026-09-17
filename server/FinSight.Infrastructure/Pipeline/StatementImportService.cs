@@ -66,7 +66,7 @@ public sealed class StatementImportService(
         PdfTextDocument text;
         try
         {
-            text = extractor.Extract(pdf);
+            text = extractor.Extract(pdf, cancellationToken: cancellationToken);
         }
         catch (PdfPasswordRequiredException)
         {

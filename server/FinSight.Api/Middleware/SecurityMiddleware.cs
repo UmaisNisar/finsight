@@ -61,11 +61,12 @@ public sealed class CsrfHeaderMiddleware(RequestDelegate next)
 
 /// <summary>
 /// Binds the signed-in user to the request's <see cref="UserContext"/>, which scopes every database query.
-/// Sessions for users that no longer exist (deleted account, expired demo) are ended.
+/// Sessions that were signed out, outlived <see cref="SessionService.MaxLifetime"/>, or belong to users that no longer
+/// exist (deleted account, expired demo) are ended.
 /// </summary>
 public sealed class UserContextMiddleware(RequestDelegate next)
 {
-    public async Task InvokeAsync(HttpContext context, UserContext userContext, FinSightDbContext db, IMemoryCache cache)
+    public async Task InvokeAsync(HttpContext context, UserContext userContext, FinSightDbContext db, SessionService sessions, IMemoryCache cache)
     {
         if (context.User.Identity?.IsAuthenticated == true && context.User.FindFirst(FinSightClaims.UserId) is not null)
         {
@@ -78,7 +79,7 @@ public sealed class UserContextMiddleware(RequestDelegate next)
                 return await db.Users.AnyAsync(u => u.Id == userId);
             });
 
-            if (!exists)
+            if (!exists || context.User.GetSessionId() is not { } sessionId || !await sessions.IsActiveAsync(sessionId, context.RequestAborted))
             {
                 await context.SignOutAsync();
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;

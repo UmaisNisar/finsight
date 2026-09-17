@@ -40,6 +40,17 @@ public sealed class UserSettings
     public bool NotificationsEnabled { get; set; }
 }
 
+/// <summary>
+/// A signed-in browser session. The session cookie names it; signing out deletes the row, so a copy of the cookie stops
+/// working even though the cookie itself has not expired.
+/// </summary>
+public sealed class UserSession : IUserOwned
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid UserId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
 public sealed class GmailConnection : IUserOwned
 {
     public Guid Id { get; set; } = Guid.NewGuid();

@@ -18,7 +18,7 @@ namespace FinSight.Api.Auth;
 /// The Gmail grant may come from a different Google account than the one used to sign in (for example a separate
 /// mailbox that receives statements); it is attached to the signed-in FinSight user either way.
 /// </summary>
-public sealed class GoogleAccountLinker(FinSightDbContext db, UserContext userContext, ITokenProtector tokenProtector, IMemoryCache cache, TimeProvider time)
+public sealed class GoogleAccountLinker(FinSightDbContext db, UserContext userContext, SessionService sessions, ITokenProtector tokenProtector, IMemoryCache cache, TimeProvider time)
 {
     public const string IntentKey = "finsight:intent";
     public const string SignInIntent = "signin";
@@ -124,7 +124,8 @@ public sealed class GoogleAccountLinker(FinSightDbContext db, UserContext userCo
             await SaveConnectionAsync(user.Id, email, grantedScopes, context.RefreshToken);
         }
 
-        context.Principal = FinSightClaims.Create(user.Id, user.DisplayName, user.Email, isDemo: false, CookieAuthenticationDefaults.AuthenticationScheme);
+        var sessionId = await sessions.StartAsync(user.Id, context.HttpContext.RequestAborted);
+        context.Principal = FinSightClaims.Create(user.Id, sessionId, user.DisplayName, user.Email, isDemo: false, CookieAuthenticationDefaults.AuthenticationScheme);
     }
 
     private async Task SaveConnectionAsync(Guid userId, string email, string scopes, string refreshToken)

@@ -15,7 +15,7 @@ namespace FinSight.Api.Controllers;
 
 [ApiController]
 [Route("api/statements")]
-public sealed class StatementsController(FinSightDbContext db, JobService jobs, TimeProvider time) : ControllerBase
+public sealed class StatementsController(FinSightDbContext db, JobService jobs, JobQueue queue, TimeProvider time) : ControllerBase
 {
     private const int MaxStatementsPerJob = 60;
     private const long MaxUploadBytes = 20 * 1024 * 1024;
@@ -131,7 +131,9 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
     [HttpPost("/api/uploads/statements")]
     [EnableRateLimiting(RateLimits.Upload)]
     [RequestSizeLimit(MaxUploadBytes + (1024 * 1024))]
-    [RequestFormLimits(MultipartBodyLengthLimit = MaxUploadBytes + (1024 * 1024))]
+    // Above MemoryBufferThreshold (64 KB by default) ASP.NET Core buffers a multipart file to a temp file on disk. Raising it past
+    // the size limit keeps the whole upload in memory, so a statement PDF is never written to disk, not even temporarily.
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxUploadBytes + (1024 * 1024), MemoryBufferThreshold = (int)MaxUploadBytes + (1024 * 1024))]
     public async Task<ActionResult<UploadStartedResponse>> Upload(IFormFile? file, [FromForm] Guid? statementId, CancellationToken cancellationToken)
     {
         if (file is null || file.Length == 0)
@@ -162,6 +164,25 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
             return ApiErrors.Problem(StatusCodes.Status429TooManyRequests, "rate_limited", "Your earlier uploads are still processing. Wait a moment and try again.");
         }
 
+        // Waiting uploads are also capped in total across all users, so large uploads can't exhaust the server's memory.
+        if (!queue.TryReserveUploadBytes(bytes.Length))
+        {
+            return ApiErrors.Problem(StatusCodes.Status429TooManyRequests, "rate_limited", "FinSight is busy processing other uploads. Try again in a minute.");
+        }
+
+        try
+        {
+            return await StartUploadAsync(bytes, file.FileName, statementId, userId, cancellationToken);
+        }
+        catch
+        {
+            queue.ReleaseUploadBytes(bytes.Length);
+            throw;
+        }
+    }
+
+    private async Task<ActionResult<UploadStartedResponse>> StartUploadAsync(byte[] bytes, string fileName, Guid? statementId, Guid userId, CancellationToken cancellationToken)
+    {
         var now = time.GetUtcNow();
         var hash = StatementImportService.HashOf(bytes);
         Statement? statement;
@@ -171,6 +192,7 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
             statement = await db.Statements.SingleOrDefaultAsync(s => s.Id == statementId && s.Status != StatementStatus.Dismissed, cancellationToken);
             if (statement is null)
             {
+                queue.ReleaseUploadBytes(bytes.Length);
                 return ApiErrors.NotFound("statement");
             }
         }
@@ -179,7 +201,7 @@ public sealed class StatementsController(FinSightDbContext db, JobService jobs, 
             statement = await db.Statements.SingleOrDefaultAsync(s => s.SourceKey == $"upload:{hash}", cancellationToken);
             if (statement is null)
             {
-                var filename = Path.GetFileName(file.FileName);
+                var filename = Path.GetFileName(fileName);
                 statement = new Statement
                 {
                     UserId = userId,

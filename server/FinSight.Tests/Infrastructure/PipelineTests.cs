@@ -540,4 +540,97 @@ public sealed class PdfPigTextExtractorTests
 
         act.Should().Throw<PdfUnreadableException>();
     }
+
+    [Fact]
+    public void A_decompression_bomb_is_refused_before_it_is_inflated()
+    {
+        // 64 MB of content that compresses to a few kilobytes, against an 8 MB budget.
+        var bomb = CompressedContentPdf(64 * 1024 * 1024);
+        var extractor = new PdfPigTextExtractor(maxDecodedBytes: 8 * 1024 * 1024);
+
+        var act = () => extractor.Extract(bomb);
+
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        act.Should().Throw<PdfUnreadableException>().WithMessage("*too large or complex*");
+        (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore).Should().BeLessThan(32L * 1024 * 1024, "the stream is measured, not inflated into memory");
+    }
+
+    [Fact]
+    public void A_compressed_page_within_the_budget_is_read()
+    {
+        var document = new PdfPigTextExtractor(maxDecodedBytes: 8 * 1024 * 1024).Extract(CompressedContentPdf(64 * 1024));
+
+        document.Pages.Single().Words.Should().Contain(w => w.Text == "Hello");
+    }
+
+    [Fact]
+    public void Parsing_stops_when_it_runs_out_of_time()
+    {
+        var act = () => new PdfPigTextExtractor(timeout: TimeSpan.Zero).Extract(PdfStatementBuilder.SampleChequingStatement());
+
+        act.Should().Throw<PdfUnreadableException>().WithMessage("*too large or complex*");
+    }
+
+    [Fact]
+    public void Parsing_honours_cancellation()
+    {
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        var act = () => new PdfPigTextExtractor().Extract(PdfStatementBuilder.SampleChequingStatement(), cancellationToken: cancelled.Token);
+
+        act.Should().Throw<OperationCanceledException>();
+    }
+
+    /// <summary>A one-page PDF whose Flate-compressed content stream draws "Hello" and then pads to <paramref name="contentBytes"/>.</summary>
+    private static byte[] CompressedContentPdf(int contentBytes)
+    {
+        var text = "BT /F1 12 Tf 72 712 Td (Hello) Tj ET\n"u8.ToArray();
+        byte[] compressed;
+        using (var output = new MemoryStream())
+        {
+            using (var zlib = new System.IO.Compression.ZLibStream(output, System.IO.Compression.CompressionLevel.SmallestSize, leaveOpen: true))
+            {
+                zlib.Write(text);
+                var padding = new byte[1024 * 1024];
+                Array.Fill(padding, (byte)' ');
+                for (var remaining = contentBytes - text.Length; remaining > 0; remaining -= padding.Length)
+                {
+                    zlib.Write(padding, 0, Math.Min(remaining, padding.Length));
+                }
+            }
+
+            compressed = output.ToArray();
+        }
+
+        var ascii = System.Text.Encoding.ASCII;
+        using var pdf = new MemoryStream();
+        var offsets = new List<long>();
+        void Write(string s) => pdf.Write(ascii.GetBytes(s));
+        void Object(string body)
+        {
+            offsets.Add(pdf.Position);
+            Write($"{offsets.Count} 0 obj\n{body}\nendobj\n");
+        }
+
+        Write("%PDF-1.7\n");
+        Object("<< /Type /Catalog /Pages 2 0 R >>");
+        Object("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+        Object("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>");
+        offsets.Add(pdf.Position);
+        Write($"4 0 obj\n<< /Length {compressed.Length} /Filter /FlateDecode >>\nstream\n");
+        pdf.Write(compressed);
+        Write("\nendstream\nendobj\n");
+        Object("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+
+        var xref = pdf.Position;
+        Write($"xref\n0 {offsets.Count + 1}\n0000000000 65535 f \n");
+        foreach (var offset in offsets)
+        {
+            Write($"{offset:D10} 00000 n \n");
+        }
+
+        Write($"trailer\n<< /Size {offsets.Count + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        return pdf.ToArray();
+    }
 }

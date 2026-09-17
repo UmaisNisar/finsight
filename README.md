@@ -91,6 +91,9 @@ In production, use environment variables: `Gemini__ApiKey`, `Google__ClientId`, 
 | `Google:ClientId` / `Google:ClientSecret` | Enables Google sign-in and Gmail. Without them, demo mode and PDF upload still work. |
 | `ForwardedHeaders:Enabled` | Set to `true` behind a reverse proxy that terminates HTTPS, and list the proxies in `ForwardedHeaders:KnownProxies`. Off by default so clients can't spoof their address past rate limits. |
 | `RateLimits:DemoPerHour`, `RateLimits:UploadsPerHour` | Per-address demo sign-ins (default 20) and per-user uploads (default 120). |
+| `Uploads:MaxQueuedMegabytes` | Memory for uploaded PDFs waiting to be processed, across all users (default 256). Uploads beyond it get a 429. |
+| `DataProtection:KeysPath` | Where the encryption key ring lives (default `.data/keys`, next to the database). Keep it out of database backups. |
+| `DataProtection:CertificatePath` / `DataProtection:CertificatePassword` | A PKCS#12 certificate that encrypts the key ring at rest. Set it on Linux and macOS; without it the key ring is DPAPI-encrypted on Windows and **unencrypted** elsewhere. |
 
 <details>
 <summary><strong>Setting up Google sign-in and Gmail</strong></summary>
@@ -157,11 +160,13 @@ web/src/
 
 ## Security and privacy
 
-- **Secrets:** OAuth refresh tokens and users' Gemini keys are encrypted with ASP.NET Core Data Protection and never sent to the browser. A saved key is only ever shown as its last four characters.
-- **Financial data:** PDFs are processed in memory and never written to disk; only a SHA-256 hash is kept. Card and account numbers are masked to the last four digits before storage, logging or AI. Transaction descriptions are encrypted at rest.
-- **What the AI sees:** aggregates, category totals, merchant names and pre-selected anomaly candidates. Never account numbers, raw descriptions, email content or identity.
+The verified, detailed account (what is collected, stored, encrypted and shared, and the limitations) is [docs/security-and-privacy.md](docs/security-and-privacy.md). To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+- **Secrets:** OAuth refresh tokens and users' Gemini keys are encrypted with ASP.NET Core Data Protection and never sent to the browser. A saved key is only ever shown as its last four characters. The key ring is encrypted with DPAPI on Windows or a configured certificate.
+- **Financial data:** PDFs are processed in memory and never written to disk, not even as temporary upload buffers; only a SHA-256 hash is kept. Card and account numbers are masked to the last four digits before storage or AI. Transaction descriptions are encrypted at rest; amounts, dates, merchant names and statement details are not, so the database file itself must be protected.
+- **What the AI sees:** aggregates, category totals, merchant names, dates and amounts of notable transactions, and, for categorization, masked statement descriptors. Never account numbers, email content, or the user's name or email address. Merchant names come from statement text, so a transfer to a person can include that person's name.
 - **Isolation:** every user-owned table has an EF Core query filter bound to the signed-in user that fails closed, and writes to another user's rows are refused.
-- **Web security:** HttpOnly SameSite cookies, a required custom header on state-changing requests (CSRF), CSP and security headers, rate limits on sensitive endpoints, and error responses with stable codes instead of stack traces.
+- **Web security:** HttpOnly SameSite cookies tied to a server-side session (signing out ends it on the server, so a copied cookie stops working; sessions end 30 days after sign-in), a required custom header on state-changing requests (CSRF), CSP and security headers, rate limits on sensitive endpoints, request size limits, bounded PDF parsing, and error responses with stable codes instead of stack traces.
 - **User control:** disconnect Gmail (revoked at Google) and delete transactions, statements, all data or the account at any time.
 
 ## Design decisions

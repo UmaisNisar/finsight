@@ -10,8 +10,8 @@ namespace FinSight.Core.Abstractions;
 public interface IPdfTextExtractor
 {
     /// <exception cref="PdfPasswordRequiredException">The PDF is encrypted and no valid password was given.</exception>
-    /// <exception cref="PdfUnreadableException">The file is not a readable PDF.</exception>
-    PdfTextDocument Extract(ReadOnlyMemory<byte> pdf, string? password = null);
+    /// <exception cref="PdfUnreadableException">The file is not a readable PDF, or is too large or complex to read within the parsing limits.</exception>
+    PdfTextDocument Extract(ReadOnlyMemory<byte> pdf, string? password = null, CancellationToken cancellationToken = default);
 }
 
 public sealed class PdfPasswordRequiredException : Exception

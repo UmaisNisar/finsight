@@ -61,6 +61,7 @@ public sealed partial class JobWorker(JobQueue queue, IServiceScopeFactory scope
             finally
             {
                 userLock.Release();
+                queue.ReleaseUploadBytes(JobQueue.UploadBytesOf(item));
             }
         }
     }

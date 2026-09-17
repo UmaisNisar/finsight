@@ -14,6 +14,7 @@ public static partial class AuthenticationSetup
     public static IServiceCollection AddFinSightAuthentication(this IServiceCollection services, IConfiguration configuration, IWebHostEnvironment environment)
     {
         services.AddScoped<GoogleAccountLinker>();
+        services.AddScoped<SessionService>();
 
         var google = configuration.GetSection(GoogleIntegrationOptions.Section).Get<GoogleIntegrationOptions>() ?? new GoogleIntegrationOptions();
         var authentication = services

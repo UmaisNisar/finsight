@@ -24,13 +24,33 @@ builder.Configuration["ConnectionStrings:FinSight"] = connectionString;
 builder.Services.AddFinSightInfrastructure(builder.Configuration);
 
 var keysPath = builder.Configuration["DataProtection:KeysPath"] ?? ".data/keys";
-builder.Services.AddDataProtection()
+var dataProtection = builder.Services.AddDataProtection()
     .SetApplicationName("FinSight")
-    // On Windows the key ring is encrypted with DPAPI. On Linux, configure certificate protection for production.
     .PersistKeysToFileSystem(new DirectoryInfo(Path.GetFullPath(keysPath, builder.Environment.ContentRootPath)));
 
+// The key ring decrypts every encrypted field, so it must not sit next to the database in plain form. With a custom key
+// directory, Data Protection writes keys unencrypted unless told otherwise: use a certificate when one is configured
+// (DataProtection:CertificatePath and DataProtection:CertificatePassword, a PKCS#12 file), else DPAPI on Windows.
+// On other platforms without a certificate the keys stay unencrypted, and Data Protection logs a warning when it writes one.
+var keyCertificatePath = builder.Configuration["DataProtection:CertificatePath"];
+if (!string.IsNullOrWhiteSpace(keyCertificatePath))
+{
+    var keyCertificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
+        Path.GetFullPath(keyCertificatePath, builder.Environment.ContentRootPath), builder.Configuration["DataProtection:CertificatePassword"]);
+    dataProtection.ProtectKeysWithCertificate(keyCertificate).UnprotectKeysWithAnyCertificate(keyCertificate);
+}
+else if (OperatingSystem.IsWindows())
+{
+    dataProtection.ProtectKeysWithDpapi();
+}
+
 builder.Services
-    .AddControllers()
+    .AddControllers(options =>
+    {
+        // JSON bodies are small (settings, edits, lists of ids). Kestrel's default allows 30 MB per request; statement
+        // uploads set their own, larger limit.
+        options.Filters.Add(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(MaxJsonRequestBytes));
+    })
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
@@ -112,4 +132,8 @@ app.MapFallbackToFile("index.html").AllowAnonymous();
 
 await app.RunAsync();
 
-public partial class Program;
+public partial class Program
+{
+    /// <summary>The largest request body accepted by any endpoint except statement uploads.</summary>
+    public const long MaxJsonRequestBytes = 1024 * 1024;
+}

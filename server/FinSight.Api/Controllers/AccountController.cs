@@ -154,6 +154,11 @@ public sealed class AccountController(FinSightDbContext db) : ControllerBase
         await tokens.DisconnectAsync(userId, cancellationToken);
         await DeleteFinancialDataAsync(deleteUser: true, cancellationToken);
         cache.Remove($"user-exists:{userId}");
+        if (User.GetSessionId() is { } sessionId)
+        {
+            cache.Remove($"session:{sessionId}");
+        }
+
         await HttpContext.SignOutAsync();
         return NoContent();
     }
@@ -185,6 +190,7 @@ public sealed class AccountController(FinSightDbContext db) : ControllerBase
         await db.ProcessingJobs.ExecuteDeleteAsync(cancellationToken);
         if (deleteUser)
         {
+            await db.UserSessions.ExecuteDeleteAsync(cancellationToken);
             await db.Users.ExecuteDeleteAsync(cancellationToken);
         }
 

@@ -110,7 +110,7 @@ public sealed class AuthController(
     [AllowAnonymous]
     [EnableRateLimiting(RateLimits.Demo)]
     [HttpPost("demo")]
-    public async Task<ActionResult<SessionUser>> StartDemo([FromServices] DemoDataService demo, CancellationToken cancellationToken)
+    public async Task<ActionResult<SessionUser>> StartDemo([FromServices] DemoDataService demo, [FromServices] SessionService sessions, CancellationToken cancellationToken)
     {
         if (!demoOptions.Value.Enabled)
         {
@@ -118,18 +118,25 @@ public sealed class AuthController(
         }
 
         var user = await demo.CreateDemoUserAsync(cancellationToken);
+        var sessionId = await sessions.StartAsync(user.Id, cancellationToken);
         await HttpContext.SignInAsync(
             CookieAuthenticationDefaults.AuthenticationScheme,
-            FinSightClaims.Create(user.Id, user.DisplayName, user.Email, isDemo: true, CookieAuthenticationDefaults.AuthenticationScheme),
+            FinSightClaims.Create(user.Id, sessionId, user.DisplayName, user.Email, isDemo: true, CookieAuthenticationDefaults.AuthenticationScheme),
             new AuthenticationProperties { IsPersistent = false });
 
         return ToSessionUser(user);
     }
 
+    /// <summary>Ends the session on the server as well as deleting the cookie, so a copy of the cookie stops working too.</summary>
     [AllowAnonymous]
     [HttpPost("logout")]
-    public async Task<IActionResult> Logout()
+    public async Task<IActionResult> Logout([FromServices] SessionService sessions, CancellationToken cancellationToken)
     {
+        if (User.Identity?.IsAuthenticated == true && User.GetSessionId() is { } sessionId)
+        {
+            await sessions.EndAsync(sessionId, cancellationToken);
+        }
+
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         return NoContent();
     }

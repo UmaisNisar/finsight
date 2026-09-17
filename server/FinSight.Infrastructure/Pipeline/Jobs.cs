@@ -10,13 +10,42 @@ namespace FinSight.Infrastructure.Pipeline;
 public sealed record JobWorkItem(Guid JobId, Guid UserId, JobKind Kind, IReadOnlyList<Guid> StatementIds, IReadOnlyDictionary<Guid, byte[]>? Uploads = null);
 
 /// <summary>In-process work queue. Job state is persisted, so the UI can poll it; payloads are not.</summary>
-public sealed class JobQueue
+/// <param name="maxQueuedUploadBytes">
+/// Uploaded PDFs wait in memory until they are processed. This caps their total across all users, so many large uploads
+/// can't exhaust the server's memory.
+/// </param>
+public sealed class JobQueue(long maxQueuedUploadBytes = JobQueue.DefaultMaxQueuedUploadBytes)
 {
+    public const long DefaultMaxQueuedUploadBytes = 256L * 1024 * 1024;
+
     private readonly Channel<JobWorkItem> _channel = Channel.CreateUnbounded<JobWorkItem>(new UnboundedChannelOptions { SingleReader = false });
+    private long _queuedUploadBytes;
 
     public ChannelReader<JobWorkItem> Reader => _channel.Reader;
 
     public ValueTask EnqueueAsync(JobWorkItem item, CancellationToken cancellationToken) => _channel.Writer.WriteAsync(item, cancellationToken);
+
+    /// <summary>Reserves memory for an upload waiting to be processed. False when the server is holding too many already.</summary>
+    public bool TryReserveUploadBytes(long bytes)
+    {
+        while (true)
+        {
+            var current = Interlocked.Read(ref _queuedUploadBytes);
+            if (current + bytes > maxQueuedUploadBytes)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _queuedUploadBytes, current + bytes, current) == current)
+            {
+                return true;
+            }
+        }
+    }
+
+    public void ReleaseUploadBytes(long bytes) => Interlocked.Add(ref _queuedUploadBytes, -bytes);
+
+    public static long UploadBytesOf(JobWorkItem item) => item.Uploads?.Values.Sum(b => (long)b.Length) ?? 0;
 }
 
 public static class JobSteps
