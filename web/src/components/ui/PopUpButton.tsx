@@ -1,5 +1,6 @@
 import { Check, ChevronsUpDown, Search } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { cn } from '@/lib/cn';
 
 export interface PopUpOption<T extends string> {
@@ -249,6 +250,11 @@ export function PopUpButton<T extends string>({ value, onChange, options, label,
     }
   }
 
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    setPortalTarget(buttonRef.current?.closest('dialog') ?? document.body);
+  }, []);
+
   return (
     <>
       <button
@@ -286,91 +292,99 @@ export function PopUpButton<T extends string>({ value, onChange, options, label,
         <ChevronsUpDown size={15} strokeWidth={2.2} className="shrink-0 text-label-secondary" aria-hidden="true" />
       </button>
 
-      <div
-        ref={menuRef}
-        id={`${id}-menu`}
-        popover="auto"
-        className={cn('popup-menu fixed m-0 overscroll-contain rounded-[18px] p-1.5 text-label', searchable && 'flex-col overflow-hidden [&:popover-open]:flex')}
-      >
-        {searchable && (
-          <label className="mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-[10px] bg-fill px-2.5">
-            <Search size={15} className="shrink-0 text-label-secondary" aria-hidden="true" />
-            <span className="sr-only">{searchPlaceholder}</span>
-            <input
-              ref={searchRef}
-              type="text"
-              role="combobox"
-              aria-expanded={open}
-              aria-controls={`${id}-list`}
-              aria-autocomplete="list"
-              aria-activedescendant={open && flat.some((o) => o.value === active) ? optionId(active) : undefined}
-              autoComplete="off"
-              spellCheck={false}
-              value={search}
-              placeholder={searchPlaceholder}
-              onChange={(event) => {
-                const next = event.target.value;
-                setSearch(next);
-                const first = filterSections(allSections, next.trim().toLowerCase())[0]?.options[0];
-                if (first) setActive(first.value);
-              }}
-              onKeyDown={onListKeyDown}
-              className="min-w-0 flex-1 bg-transparent text-[0.9375rem] text-label outline-none placeholder:text-label-tertiary"
-            />
-          </label>
-        )}
+      {/*
+        Rendered at the top of its sheet rather than beside the button: the sheet panel's backdrop-filter traps a
+        popover in the panel's own paint order, and the rest of the sheet then draws over the open menu. The sheet's
+        <dialog> is the highest place that is still inside the modal, where content stays interactive.
+      */}
+      {createPortal(
         <div
-          ref={listRef}
-          id={`${id}-list`}
-          role="listbox"
-          tabIndex={-1}
-          aria-label={label}
-          aria-labelledby={labelledBy}
-          aria-activedescendant={open && !searchable ? optionId(active) : undefined}
-          onKeyDown={onListKeyDown}
-          className={cn('outline-none', searchable && 'relative min-h-0 flex-1 overflow-y-auto overscroll-contain')}
+          ref={menuRef}
+          id={`${id}-menu`}
+          popover="auto"
+          className={cn('popup-menu fixed m-0 overscroll-contain rounded-[18px] p-1.5 text-label', searchable && 'flex-col overflow-hidden [&:popover-open]:flex')}
         >
-          {flat.length === 0 && <div className="px-3 py-2 text-[0.875rem] text-label-secondary">{noMatchesText}</div>}
-          {sections.map((section, sectionIndex) => (
-            <div
-              key={section.title || sectionIndex}
-              role={section.title ? 'group' : 'presentation'}
-              aria-labelledby={section.title ? `${id}-sec-${sectionIndex}` : undefined}
-              className={cn(sectionIndex > 0 && 'mt-1.5 border-t border-separator pt-1.5')}
-            >
-              {section.title && (
-                <div id={`${id}-sec-${sectionIndex}`} role="presentation" className="px-3 pt-1 pb-1 text-[0.75rem] font-semibold text-label-secondary">
-                  {section.title}
-                </div>
-              )}
-              {section.options.map((option) => {
-                const isSelected = option.value === value;
-                const isActive = option.value === active;
-                return (
-                  // Keyboard interaction lives on the listbox (aria-activedescendant); options only need pointer handling.
-                  // eslint-disable-next-line jsx-a11y/click-events-have-key-events
-                  <div
-                    key={option.value}
-                    id={optionId(option.value)}
-                    role="option"
-                    aria-selected={isSelected}
-                    tabIndex={-1}
-                    onPointerMove={() => setActive(option.value)}
-                    onClick={() => choose(option.value)}
-                    className={cn(
-                      'flex h-9 cursor-default items-center gap-2 rounded-[10px] pr-4 pl-2 text-[0.9375rem] whitespace-nowrap select-none',
-                      isActive ? 'bg-accent text-accent-contrast' : 'text-label',
-                    )}
-                  >
-                    <span className="flex w-5 shrink-0 justify-center">{isSelected && <Check size={15} strokeWidth={2.75} aria-hidden="true" />}</span>
-                    {option.label}
+          {searchable && (
+            <label className="mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-[10px] bg-fill px-2.5">
+              <Search size={15} className="shrink-0 text-label-secondary" aria-hidden="true" />
+              <span className="sr-only">{searchPlaceholder}</span>
+              <input
+                ref={searchRef}
+                type="text"
+                role="combobox"
+                aria-expanded={open}
+                aria-controls={`${id}-list`}
+                aria-autocomplete="list"
+                aria-activedescendant={open && flat.some((o) => o.value === active) ? optionId(active) : undefined}
+                autoComplete="off"
+                spellCheck={false}
+                value={search}
+                placeholder={searchPlaceholder}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setSearch(next);
+                  const first = filterSections(allSections, next.trim().toLowerCase())[0]?.options[0];
+                  if (first) setActive(first.value);
+                }}
+                onKeyDown={onListKeyDown}
+                className="min-w-0 flex-1 bg-transparent text-[0.9375rem] text-label outline-none placeholder:text-label-tertiary"
+              />
+            </label>
+          )}
+          <div
+            ref={listRef}
+            id={`${id}-list`}
+            role="listbox"
+            tabIndex={-1}
+            aria-label={label}
+            aria-labelledby={labelledBy}
+            aria-activedescendant={open && !searchable ? optionId(active) : undefined}
+            onKeyDown={onListKeyDown}
+            className={cn('outline-none', searchable && 'relative min-h-0 flex-1 overflow-y-auto overscroll-contain')}
+          >
+            {flat.length === 0 && <div className="px-3 py-2 text-[0.875rem] text-label-secondary">{noMatchesText}</div>}
+            {sections.map((section, sectionIndex) => (
+              <div
+                key={section.title || sectionIndex}
+                role={section.title ? 'group' : 'presentation'}
+                aria-labelledby={section.title ? `${id}-sec-${sectionIndex}` : undefined}
+                className={cn(sectionIndex > 0 && 'mt-1.5 border-t border-separator pt-1.5')}
+              >
+                {section.title && (
+                  <div id={`${id}-sec-${sectionIndex}`} role="presentation" className="px-3 pt-1 pb-1 text-[0.75rem] font-semibold text-label-secondary">
+                    {section.title}
                   </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      </div>
+                )}
+                {section.options.map((option) => {
+                  const isSelected = option.value === value;
+                  const isActive = option.value === active;
+                  return (
+                    // Keyboard interaction lives on the listbox (aria-activedescendant); options only need pointer handling.
+                    // eslint-disable-next-line jsx-a11y/click-events-have-key-events
+                    <div
+                      key={option.value}
+                      id={optionId(option.value)}
+                      role="option"
+                      aria-selected={isSelected}
+                      tabIndex={-1}
+                      onPointerMove={() => setActive(option.value)}
+                      onClick={() => choose(option.value)}
+                      className={cn(
+                        'flex h-9 cursor-default items-center gap-2 rounded-[10px] pr-4 pl-2 text-[0.9375rem] whitespace-nowrap select-none',
+                        isActive ? 'bg-accent text-accent-contrast' : 'text-label',
+                      )}
+                    >
+                      <span className="flex w-5 shrink-0 justify-center">{isSelected && <Check size={15} strokeWidth={2.75} aria-hidden="true" />}</span>
+                      {option.label}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>,
+        portalTarget ?? document.body,
+      )}
     </>
   );
 }

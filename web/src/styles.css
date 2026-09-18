@@ -54,6 +54,8 @@
   --ambient-4: rgb(175 82 222 / 0.14);
   --mat-regular: rgb(255 255 255 / 0.6);
   --mat-thick: rgb(255 255 255 / 0.74);
+  /* Menus open in the top layer, where the browser refuses to blur a dialog behind them, so they stay legible on their own. */
+  --mat-menu: rgb(252 252 254 / 0.96);
   --mat-thin: rgb(255 255 255 / 0.46);
   --mat-lens: rgb(255 255 255 / 0.85);
   --rim-highlight: rgb(255 255 255 / 0.95);
@@ -109,6 +111,7 @@
     --ambient-4: rgb(140 82 255 / 0.28);
     --mat-regular: rgb(44 44 50 / 0.52);
     --mat-thick: rgb(30 30 36 / 0.72);
+    --mat-menu: rgb(40 40 46 / 0.96);
     --mat-thin: rgb(90 90 100 / 0.24);
     --mat-lens: rgb(255 255 255 / 0.14);
     --rim-highlight: rgb(255 255 255 / 0.24);
@@ -161,6 +164,7 @@
   --ambient-4: rgb(140 82 255 / 0.28);
   --mat-regular: rgb(44 44 50 / 0.52);
   --mat-thick: rgb(30 30 36 / 0.72);
+  --mat-menu: rgb(40 40 46 / 0.96);
   --mat-thin: rgb(90 90 100 / 0.24);
   --mat-lens: rgb(255 255 255 / 0.14);
   --rim-highlight: rgb(255 255 255 / 0.24);
@@ -214,6 +218,8 @@
 
 @layer base {
   html {
+    /* Keeps room for a classic scrollbar, so the centered page doesn't shift when content gets short enough to lose it. */
+    scrollbar-gutter: stable;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -776,7 +782,7 @@ dialog[open] > .alert-panel {
     width: max-content;
     max-width: calc(100vw - 24px);
     overflow: hidden auto;
-    background: var(--mat-thick);
+    background: var(--mat-menu);
     box-shadow:
       inset 0 1px 0 var(--rim-highlight),
       inset 0 0 0 1px var(--rim-edge),
