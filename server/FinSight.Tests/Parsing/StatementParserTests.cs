@@ -194,4 +194,20 @@ public class StatementParserTests
     {
         StatementMetadataExtractor.DetectCurrency(text, "CAD").Should().Be(expected);
     }
+
+    [Fact]
+    public void Purchases_abroad_do_not_change_the_statement_currency()
+    {
+        // A CIBC card month spent in Pakistan: every purchase names its rupee amount and rate, CAD appears once.
+        const string text = """
+            Amounts in CAD
+            Jan 03 Jan 05 FOODPANDA KARACHI 1600.00 PKR @ 0.004908 7.85
+            Jan 06 Jan 08 DARAZ LAHORE 13750.00 PKR @ 0.004912 67.54
+            Jan 09 Jan 11 CAREEM ISLAMABAD 1890.00 PKR @ 0.004901 9.26
+            Jan 12 Jan 14 IMTIAZ STORE 1698.25 PKR @ 0.004899 8.32
+            Jan 20 Jan 22 AMAZON.COM 25.00 USD @ 1.3712 34.28
+            """;
+
+        StatementMetadataExtractor.DetectCurrency(text, "CAD").Should().Be("CAD");
+    }
 }

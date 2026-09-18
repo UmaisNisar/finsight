@@ -25,6 +25,9 @@ internal static partial class StatementMetadataExtractor
     [GeneratedRegex(@"ending\s+in\s+(?<n>\d{4})\b", RegexOptions.IgnoreCase)]
     private static partial Regex EndingIn();
 
+    [GeneratedRegex(@"\d[\d,]*(?:\.\d+)?\s*(?:[A-Z]{3}|[$€£₨])\s*@\s*\d[\d.]*", RegexOptions.IgnoreCase)]
+    private static partial Regex ForeignExchangeAmount();
+
     [GeneratedRegex(@"\b(OPENING|BEGINNING|STARTING|PREVIOUS( STATEMENT)?) BALANCE\b|\bBALANCE (BROUGHT )?FORWARD\b|\bBROUGHT FORWARD\b", RegexOptions.IgnoreCase)]
     internal static partial Regex OpeningBalanceLabel();
 
@@ -90,6 +93,10 @@ internal static partial class StatementMetadataExtractor
 
     public static string DetectCurrency(string text, string defaultCurrency)
     {
+        // A purchase abroad shows its original amount and rate ("1600.00 PKR @ 0.004908"). Those name the currency the
+        // merchant charged, not the account's, and a month of travel would otherwise outnumber the account's own.
+        text = ForeignExchangeAmount().Replace(text, " ");
+
         var scores = new Dictionary<string, int>
         {
             ["CAD"] = Regex.Count(text, @"\bCAD\b|CA\$|\bCANADIAN DOLLARS?\b", RegexOptions.IgnoreCase),
