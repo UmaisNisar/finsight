@@ -28,13 +28,13 @@ COPY server/FinSight.Core/FinSight.Core.csproj server/FinSight.Core/
 COPY server/FinSight.Infrastructure/FinSight.Infrastructure.csproj server/FinSight.Infrastructure/
 COPY server/FinSight.Migrations.Postgres/FinSight.Migrations.Postgres.csproj server/FinSight.Migrations.Postgres/
 COPY server/FinSight.Api/FinSight.Api.csproj server/FinSight.Api/
-RUN --mount=type=cache,id=nuget-$TARGETARCH,target=/root/.nuget/packages \
-    dotnet restore server/FinSight.Api/FinSight.Api.csproj -a $TARGETARCH
+# The packages live in this layer, not a cache mount: publish runs with --no-restore, and a restore layer reused from the
+# layer cache would otherwise arrive without the mount's packages (NETSDK1064).
+RUN dotnet restore server/FinSight.Api/FinSight.Api.csproj -a $TARGETARCH
 
 COPY server/ server/
 # Release build with the repository's analyzers and TreatWarningsAsErrors (Directory.Build.props) intact.
-RUN --mount=type=cache,id=nuget-$TARGETARCH,target=/root/.nuget/packages \
-    dotnet publish server/FinSight.Api/FinSight.Api.csproj \
+RUN dotnet publish server/FinSight.Api/FinSight.Api.csproj \
       --configuration Release --arch $TARGETARCH --self-contained false --no-restore \
       --output /app -p:UseAppHost=false -p:DebugType=none
 COPY --from=web /src/server/FinSight.Api/wwwroot /app/wwwroot
