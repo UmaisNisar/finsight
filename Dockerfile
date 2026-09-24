@@ -9,7 +9,7 @@
 # build machine's architecture and cross-publish for the target one, so multi-arch builds need no emulation.
 
 # ---- Web app: static files only, identical on every architecture ----------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS web
+FROM --platform=$BUILDPLATFORM node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
@@ -18,7 +18,7 @@ COPY web/ ./
 RUN npm run build
 
 # ---- API: restore (cached until a project file changes), then publish -------------------------------------------------
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-noble@sha256:2fa828c68761b1b8c23d7662dc134421b9d3b59fe1425fdbc80804e390cdb24d AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-noble@sha256:35d40304542c8689331f8cab17c65926cdf48fe711e289321d71924b230a7d29 AS build
 ARG TARGETARCH
 WORKDIR /src
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
