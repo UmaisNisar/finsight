@@ -60,6 +60,19 @@ public class CategorizationTests
         Categorize("PURCHASE INTEREST CHARGE", -18.20m).CategoryId.Should().Be(CategoryTaxonomy.InterestCharges);
     }
 
+    [Theory]
+    // CIBC prefixes a direct-deposit paycheque with "Electronic Funds Transfer"; the generic "funds transfer"
+    // wording must not hide it from income. Government and freelance deposits reach banks the same way.
+    [InlineData("Electronic Funds Transfer PAY PAYROLL PAYROLL", "income.salary")]
+    [InlineData("Electronic Funds Transfer CANADA CHILD BENEFIT", "income.government")]
+    public void Payroll_and_benefit_deposits_beat_the_generic_transfer_wording(string description, string categoryId)
+    {
+        var result = Categorize(description, 2790.52m);
+
+        result.Type.Should().Be(TransactionType.Income);
+        result.CategoryId.Should().Be(categoryId);
+    }
+
     [Fact]
     public void Money_back_from_a_merchant_is_a_refund_that_offsets_spending()
     {

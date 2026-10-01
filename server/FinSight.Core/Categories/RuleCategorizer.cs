@@ -100,7 +100,8 @@ public static partial class RuleCategorizer
                 rule.Source == CategorySource.User ? "Your rule for this merchant" : rule.Reason ?? "Previously categorized");
         }
 
-        // Money movements that are not income or spending.
+        // Specific non-spending movements. Each names a card or an investment account — wording an income
+        // deposit never carries — so they stay ahead of the income checks.
         if (input.AccountType == AccountType.CreditCard && inflow && CardPaymentReceived().IsMatch(description))
         {
             return Transfer(CategoryTaxonomy.CreditCardPayments, 0.97, "Payment towards this credit card");
@@ -116,28 +117,14 @@ public static partial class RuleCategorizer
             return Transfer(CategoryTaxonomy.Investments, 0.9, "Investment account contribution or withdrawal");
         }
 
-        if (OwnTransfer().IsMatch(description) && !PersonToPerson().IsMatch(description))
-        {
-            return Transfer(CategoryTaxonomy.Transfers, 0.85, "Transfer between accounts");
-        }
-
-        // Fees and interest.
-        if (!inflow && InterestCharged().IsMatch(description))
-        {
-            return Expense(CategoryTaxonomy.InterestCharges, 0.95, "Interest charged");
-        }
-
-        if (!inflow && BankFee().IsMatch(description))
-        {
-            return Expense(CategoryTaxonomy.BankFees, 0.93, "Bank or card fee");
-        }
-
+        // Income is matched before the generic transfer bucket. Banks label a direct-deposit paycheque as an
+        // "Electronic Funds Transfer" too (CIBC: "Electronic Funds Transfer PAY PAYROLL"), and that generic
+        // "funds transfer" wording must not swallow a paycheque into transfers and leave income reading as zero.
         if (inflow && InterestEarned().IsMatch(description))
         {
             return Income(CategoryTaxonomy.InterestIncome, 0.95, "Interest earned");
         }
 
-        // Income.
         if (inflow && Payroll().IsMatch(description))
         {
             return Income("income.salary", 0.93, "Payroll deposit");
@@ -151,6 +138,23 @@ public static partial class RuleCategorizer
         if (inflow && Freelance().IsMatch(description))
         {
             return Income("income.freelance", 0.85, "Freelance or platform payout");
+        }
+
+        // Transfers between your own accounts.
+        if (OwnTransfer().IsMatch(description) && !PersonToPerson().IsMatch(description))
+        {
+            return Transfer(CategoryTaxonomy.Transfers, 0.85, "Transfer between accounts");
+        }
+
+        // Fees and interest charged.
+        if (!inflow && InterestCharged().IsMatch(description))
+        {
+            return Expense(CategoryTaxonomy.InterestCharges, 0.95, "Interest charged");
+        }
+
+        if (!inflow && BankFee().IsMatch(description))
+        {
+            return Expense(CategoryTaxonomy.BankFees, 0.93, "Bank or card fee");
         }
 
         var refundWords = RefundWords().IsMatch(description);
