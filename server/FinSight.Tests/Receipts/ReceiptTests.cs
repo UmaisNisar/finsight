@@ -58,6 +58,10 @@ public sealed class ReceiptSendersTests
     [InlineData("Amazon", "amazon.ca")]
     [InlineData("Uber", "uber.com")]
     [InlineData("Uber Eats", "uber.com")]
+    [InlineData("SkipTheDishes", "skipthedishes.com")]
+    [InlineData("OpenAI", "openai.com")]
+    [InlineData("Anthropic", "anthropic.com")]
+    [InlineData("McDonald's", "mcdonalds.com")]
     public void Resolves_known_merchants(string merchant, string expectedDomain)
     {
         ReceiptSenders.For(merchant)!.Domains.Should().Contain(expectedDomain);
