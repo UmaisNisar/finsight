@@ -111,12 +111,14 @@ public static class StatementLabels
     public static IEnumerable<JobStep> ProcessingPlan(IEnumerable<Statement> statements) =>
         statements.Select(s => new JobStep($"s:{s.Id}", StepLabel(s), StepStatus.Pending))
             .Append(new JobStep("categorize", "Categorizing transactions", StepStatus.Pending))
-            .Append(new JobStep("insights", "Generating insights", StepStatus.Pending));
+            .Append(new JobStep("insights", "Generating insights", StepStatus.Pending))
+            .Append(new JobStep("receipts", "Matching receipts", StepStatus.Pending));
 
     public static IEnumerable<JobStep> SyncPlan() =>
     [
         new("gmail", "Connecting to Gmail", StepStatus.Pending),
         new("search", "Finding statements", StepStatus.Pending),
+        new("receipts", "Matching receipts", StepStatus.Pending),
     ];
 }
 
@@ -127,6 +129,7 @@ public sealed partial class JobRunner(
     StatementImportService importer,
     CategorizationService categorization,
     AnalysisService analysis,
+    ReceiptMatchingService receipts,
     TimeProvider time,
     ILogger<JobRunner> logger)
 {
@@ -173,7 +176,17 @@ public sealed partial class JobRunner(
 
         var result = await discovery.DiscoverAsync(item.UserId, cancellationToken);
         await reporter.SetAsync("search", StatementLabels.SyncDetail(result), StepStatus.Done, cancellationToken: cancellationToken);
+
+        // A scan also fills in receipts for recent purchases that don't have one yet, so existing transactions get
+        // matched, not only ones imported from here on.
+        var user = await db.Users.SingleAsync(cancellationToken);
+        var since = DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime).AddDays(-RecentReceiptDays);
+        var recent = await db.Transactions.Where(t => t.Date >= since).ToListAsync(cancellationToken);
+        await MatchReceiptsAsync(user, recent, reporter, cancellationToken);
     }
+
+    /// <summary>How far back a scan reaches to attach receipts to purchases that don't have one yet.</summary>
+    private const int RecentReceiptDays = 120;
 
     private async Task RunProcessingAsync(JobWorkItem item, JobReporter reporter, CancellationToken cancellationToken)
     {
@@ -247,6 +260,44 @@ public sealed partial class JobRunner(
 
         await CategorizeAsync(user, imported, reporter, cancellationToken);
         await GenerateInsightsAsync(user, imported, reporter, cancellationToken);
+
+        var statementIds = imported.Select(s => s.Id).ToList();
+        var importedTransactions = statementIds.Count == 0
+            ? []
+            : await db.Transactions.Where(t => statementIds.Contains(t.StatementId)).ToListAsync(cancellationToken);
+        await MatchReceiptsAsync(user, importedTransactions, reporter, cancellationToken);
+    }
+
+    private async Task MatchReceiptsAsync(User user, List<Transaction> transactions, JobReporter reporter, CancellationToken cancellationToken)
+    {
+        if (!user.Settings.ReceiptMatchingEnabled)
+        {
+            await reporter.SetAsync("receipts", "Matching receipts", StepStatus.Skipped, "Off", cancellationToken);
+            return;
+        }
+
+        if (transactions.Count == 0)
+        {
+            await reporter.SetAsync("receipts", "Matching receipts", StepStatus.Skipped, "Nothing new to match", cancellationToken);
+            return;
+        }
+
+        await reporter.SetAsync("receipts", "Matching receipts", StepStatus.Running, "Searching Gmail for order confirmations", cancellationToken);
+
+        try
+        {
+            var result = await receipts.MatchAsync(user.Id, transactions, cancellationToken);
+            var detail = result.Matched > 0
+                ? $"Added {result.Matched} receipt{(result.Matched == 1 ? "" : "s")}"
+                : result.Considered > 0 ? "No matching emails found" : "No purchases to match";
+            await reporter.SetAsync("receipts", "Matching receipts", StepStatus.Done, detail, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Receipt matching is an extra; never let it fail a job whose statements imported fine.
+            LogReceiptsFailed(logger, user.Id, ex);
+            await reporter.SetAsync("receipts", "Matching receipts", StepStatus.Skipped, "Couldn’t reach Gmail", cancellationToken);
+        }
     }
 
     private async Task<UploadedFile?> ObtainFileAsync(JobWorkItem item, Statement statement, JobReporter reporter, string key, string label, CancellationToken cancellationToken)
@@ -368,4 +419,7 @@ public sealed partial class JobRunner(
 
     [LoggerMessage(LogLevel.Error, "Statement {StatementId} failed with {ExceptionType}")]
     private static partial void LogStatementFailed(ILogger logger, string exceptionType, Guid statementId);
+
+    [LoggerMessage(LogLevel.Warning, "Receipt matching failed for user {UserId}")]
+    private static partial void LogReceiptsFailed(ILogger logger, Guid userId, Exception ex);
 }

@@ -112,8 +112,15 @@ public sealed class TransactionsController(FinSightDbContext db, DashboardServic
         };
 
         var counted = list.Where(t => !t.IsExcluded && !t.IsReversal && t.EffectiveType != TransactionType.Transfer).ToList();
+
+        // Receipts only for the page being returned, so a large history doesn't load them all.
+        var pageItems = sorted.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        var pageIds = pageItems.Select(t => t.Id).ToList();
+        var receipts = (await db.TransactionReceipts.AsNoTracking().Where(r => pageIds.Contains(r.TransactionId)).ToListAsync(cancellationToken))
+            .ToDictionary(r => r.TransactionId);
+
         return new TransactionPage(
-            sorted.Skip((page - 1) * pageSize).Take(pageSize).Select(t => t.ToDto(resolve)).ToList(),
+            pageItems.Select(t => t.ToDto(resolve, receipts.GetValueOrDefault(t.Id))).ToList(),
             list.Count,
             page,
             pageSize,

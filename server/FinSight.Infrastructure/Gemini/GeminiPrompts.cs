@@ -52,6 +52,26 @@ internal static class GeminiPrompts
         {facts.ToJson()}
         """;
 
+    public const string ReceiptSystemInstruction = """
+        You read an order-confirmation or receipt email and list what was bought. The text has already had personal
+        details (names, addresses, emails, phone numbers, card and account numbers) removed and replaced with
+        placeholders like [address] — ignore those placeholders.
+
+        Rules:
+        - List only the products or services ordered, one entry each, with the name as written.
+        - Do not invent items, prices or quantities. Omit a price or quantity the email doesn't state.
+        - Do not include shipping, tax or discount lines as items; the total already reflects them.
+        - Keep names short and free of prices. Return an empty items list if the email is not an itemised receipt.
+        """;
+
+    public static string ReceiptPrompt(string merchant, string redactedBody) =>
+        $"""
+            Merchant: {merchant}
+
+            Receipt email (redacted):
+            {redactedBody}
+            """;
+
     public const string CategorizationSystemInstruction = """
         You categorize bank and credit card transactions by merchant. You receive merchant names and a masked
         statement descriptor. Choose the single best categoryId from the allowed list.

@@ -4,6 +4,7 @@ using FinSight.Core.Categories;
 using FinSight.Core.Domain;
 using FinSight.Core.Insights;
 using FinSight.Core.Statements;
+using FinSight.Core.Receipts;
 using FinSight.Core.Text;
 using FinSight.Infrastructure.Insights;
 using FinSight.Infrastructure.Pipeline;
@@ -40,6 +41,7 @@ public sealed record SettingsDto(
     bool AutoScanEnabled,
     bool AutoImportEnabled,
     bool MonthlyDigestEnabled,
+    bool ReceiptMatchingEnabled,
     bool EmailConfigured);
 
 /// <summary>
@@ -54,7 +56,8 @@ public sealed record UpdateSettingsRequest(
     bool AiInsightsEnabled,
     bool? AutoScanEnabled = null,
     bool? AutoImportEnabled = null,
-    bool? MonthlyDigestEnabled = null);
+    bool? MonthlyDigestEnabled = null,
+    bool? ReceiptMatchingEnabled = null);
 
 public sealed record TestEmailResponse(bool Sent);
 
@@ -137,7 +140,20 @@ public sealed record TransactionDto(
     bool IsReversal,
     bool IsExcluded,
     bool IsEdited,
-    AccountRef Account);
+    AccountRef Account,
+    ReceiptDto? Receipt = null);
+
+/// <summary>What was bought, matched from the order-confirmation email in Gmail. Items are empty for a link-only match.</summary>
+public sealed record ReceiptDto(
+    string MessageId,
+    string Subject,
+    DateOnly EmailDate,
+    string? OrderNumber,
+    decimal? Total,
+    IReadOnlyList<ReceiptItemDto> Items,
+    bool FromAi);
+
+public sealed record ReceiptItemDto(string Name, int? Quantity, decimal? Amount);
 
 public sealed record TransactionPage(IReadOnlyList<TransactionDto> Items, int Total, int Page, int PageSize, decimal MoneyIn, decimal MoneyOut);
 
@@ -228,7 +244,7 @@ public static class Mapping
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public static SettingsDto ToDto(this UserSettings s, bool emailConfigured) =>
-        new(s.Currency, s.DateFormat, s.Theme, s.AiCategorizationEnabled, s.AiInsightsEnabled, s.AutoScanEnabled, s.AutoImportEnabled, s.MonthlyDigestEnabled, emailConfigured);
+        new(s.Currency, s.DateFormat, s.Theme, s.AiCategorizationEnabled, s.AiInsightsEnabled, s.AutoScanEnabled, s.AutoImportEnabled, s.MonthlyDigestEnabled, s.ReceiptMatchingEnabled, emailConfigured);
 
     public static StatementDto ToDto(this Statement s)
     {
@@ -270,7 +286,9 @@ public static class Mapping
     public static IReadOnlyList<string> ReadList(string? json) =>
         string.IsNullOrEmpty(json) ? [] : JsonSerializer.Deserialize<List<string>>(json, Json) ?? [];
 
-    public static TransactionDto ToDto(this Transaction t, Func<string, CategoryDefinition> resolve)
+    public static TransactionDto ToDto(this Transaction t, Func<string, CategoryDefinition> resolve) => t.ToDto(resolve, null);
+
+    public static TransactionDto ToDto(this Transaction t, Func<string, CategoryDefinition> resolve, TransactionReceipt? receipt)
     {
         var category = resolve(t.EffectiveCategoryId);
         return new TransactionDto(
@@ -292,7 +310,23 @@ public static class Mapping
             t.IsReversal,
             t.IsExcluded,
             t.UserCategoryId is not null || t.UserMerchant is not null || t.UserType is not null || t.IsExcluded,
-            new AccountRef(t.Statement?.Institution, t.Statement?.AccountType ?? AccountType.Unknown, t.Statement?.AccountMask));
+            new AccountRef(t.Statement?.Institution, t.Statement?.AccountType ?? AccountType.Unknown, t.Statement?.AccountMask),
+            receipt is null ? null : ReceiptToDto(receipt));
+    }
+
+    private static ReceiptDto ReceiptToDto(TransactionReceipt r)
+    {
+        var items = string.IsNullOrWhiteSpace(r.ItemsJson)
+            ? []
+            : JsonSerializer.Deserialize<List<ReceiptItem>>(r.ItemsJson) ?? [];
+        return new ReceiptDto(
+            r.MessageId,
+            r.Subject,
+            r.EmailDate,
+            string.IsNullOrWhiteSpace(r.OrderNumber) ? null : r.OrderNumber,
+            r.Total,
+            items.Select(i => new ReceiptItemDto(i.Name, i.Quantity, i.Amount)).ToList(),
+            r.Source == ReceiptSource.Ai);
     }
 
     /// <summary>Display name only ("TD Canada Trust"), without the email address.</summary>

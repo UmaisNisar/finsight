@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { errorMessage } from '@/api/client';
 import { useCategories, useUpdateTransaction } from '@/api/queries';
-import type { Transaction, TransactionType } from '@/api/schemas';
+import type { Receipt, Transaction, TransactionType } from '@/api/schemas';
 import { useToast } from '@/app/providers/ToastProvider';
 import { Collapse } from '@/components/ui/AutoHeight';
 import { Button } from '@/components/ui/Button';
@@ -203,6 +203,8 @@ function EditorSheet({ transaction, open, dateFormat, onClose }: { transaction: 
           {transaction.isReversal && <p className="caption mt-1">Reversed by a matching credit, so it’s not counted.</p>}
         </section>
 
+        {transaction.receipt && <ReceiptSection receipt={transaction.receipt} currency={transaction.currency} dateFormat={dateFormat} />}
+
         {update.isError && (
           <p role="alert" className="text-[0.9375rem] text-critical">
             {errorMessage(update.error)}
@@ -210,5 +212,50 @@ function EditorSheet({ transaction, open, dateFormat, onClose }: { transaction: 
         )}
       </form>
     </Sheet>
+  );
+}
+
+/** The order-confirmation email matched to this purchase: what was bought, with a link back to the email in Gmail. */
+function ReceiptSection({ receipt, currency, dateFormat }: { receipt: Receipt; currency: string; dateFormat: string }) {
+  // Gmail opens any message by its id in the "all mail" view, in whichever account the user is signed into.
+  const gmailUrl = `https://mail.google.com/mail/u/0/#all/${receipt.messageId}`;
+  return (
+    <section aria-label="From your Gmail" className="rounded-xl bg-surface-sunken px-4 py-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="eyebrow">From your Gmail</h3>
+        {receipt.orderNumber && <span className="caption font-mono">Order {receipt.orderNumber}</span>}
+      </div>
+
+      {receipt.items.length > 0 ? (
+        <ul className="mt-2 space-y-1">
+          {receipt.items.map((item, i) => (
+            <li key={i} className="flex items-baseline justify-between gap-3 text-[0.9375rem]">
+              <span className="min-w-0 break-words text-label">
+                {item.quantity && item.quantity > 1 && <span className="text-label-secondary">{item.quantity}× </span>}
+                {item.name}
+              </span>
+              {item.amount != null && <span className="shrink-0 tabular-nums text-label-secondary">{formatMoney(item.amount, currency)}</span>}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1 text-[0.9375rem] break-words text-label-secondary">{receipt.subject}</p>
+      )}
+
+      {receipt.total != null && receipt.items.length > 0 && (
+        <p className="mt-2 flex items-baseline justify-between gap-3 border-t border-separator pt-2 text-[0.9375rem] font-medium">
+          <span>Order total</span>
+          <span className="tabular-nums">{formatMoney(receipt.total, currency)}</span>
+        </p>
+      )}
+
+      <div className="mt-2.5 flex items-center gap-2">
+        <a href={gmailUrl} target="_blank" rel="noreferrer" className="text-[0.875rem] font-medium text-accent hover:underline">
+          Open in Gmail
+        </a>
+        <span className="caption">· {formatDate(receipt.emailDate, dateFormat)}</span>
+      </div>
+      {!receipt.fromAi && receipt.items.length === 0 && <p className="caption mt-1">Matched to this email. Turn on AI to list the items.</p>}
+    </section>
   );
 }

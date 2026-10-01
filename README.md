@@ -133,6 +133,8 @@ In Testing mode Google expires refresh tokens after 7 days; FinSight then shows 
 
 Users can opt in (Settings → Automation) to a daily Gmail scan, to automatic import for accounts they've imported before, and to a monthly summary email sent from the 3rd of each month for the previous month. Scans only find statements; nothing else is imported without the user.
 
+**Receipt matching** (Settings → Automation, off by default) links a purchase to its order-confirmation email. After a scan, FinSight searches Gmail by sender and a date window around the charge for merchants it knows (IKEA, Amazon, Uber and others in `Core/Receipts/ReceiptSenders.cs`), reads the matched email's body, strips personal details from it (`Core/Receipts/ReceiptRedactor.cs`), and asks Gemini for the item lines. The email is never stored — only the items, order number and subject, encrypted like a transaction's description. It needs Gmail connected and a Gemini key; without the key the match still links the email, just without the itemised list. This is the one feature that reads email bodies, which is why it's opt-in — see [security and privacy](docs/security-and-privacy.md).
+
 | Setting | Purpose |
 | --- | --- |
 | `Automation:Enabled` | Runs scheduled scans and summary emails (default `true`). `false` stops both for everyone. |

@@ -91,7 +91,7 @@ On Linux or macOS without a certificate (which includes containers), FinSight **
 
 - **Statement files.** Uploaded PDFs, CSVs, OFX and QFX files are read into memory and never written to disk, not even as a temporary file while the upload arrives. PDFs downloaded from Gmail are held in memory only while they're processed. Only a SHA-256 hash is kept, to spot the same file twice (`Api/Controllers/StatementsController.cs`, `Infra/Pipeline/Jobs.cs`, `Infra/Pipeline/StatementImportService.cs`).
 - **Full card or account numbers.** At most the last four digits are kept (see masking above).
-- **Email bodies.** Gmail requests are limited to headers, the snippet and attachment details, and FinSight never downloads the message body (`Infra/Gmail/GmailApiClient.cs`). It doesn't store headers other than the masked subject and the sender, or the snippet.
+- **Email bodies.** For finding statements, Gmail requests are limited to headers, the snippet and attachment details; FinSight does not download the message body (`Infra/Gmail/GmailApiClient.cs`). The one exception is receipt matching, off by default: when you turn it on, FinSight downloads the body of an order-confirmation email it matched to a purchase, strips personal details from it (`Core/Receipts/ReceiptRedactor.cs`), and sends the item lines to the AI. Even then the body is never stored — only the items, order number and the email's subject, encrypted like a transaction's description (`Core/Receipts`, `Infra/Pipeline/ReceiptMatchingService.cs`). It doesn't store other headers or the snippet.
 - **Emails that aren't statements.** They're looked at in memory to classify them and then dropped. Only statements and statement-ready notices are recorded.
 - **PDF passwords.** A password you type to unlock a PDF goes in the body of that one upload request, is passed to the PDF reader for that one read, and is never stored in the database, written to job progress, logged or returned in a response or error. A wrong password fails with its own code, `pdf_password_incorrect`, whose message doesn't include it (`Api/Controllers/StatementsController.cs`, `Infra/Pipeline/StatementImportService.cs`, `Infra/Pdf/PdfPigTextExtractor.cs`). In the browser, the field is cleared after each attempt, and the password is never put in a URL, the query cache or browser storage. To retry, the browser keeps the chosen `File` in memory until it's read or removed from the list; after a reload, you choose the file again (`web/src/app/providers/JobsProvider.tsx`, `web/src/components/PdfPasswordPrompt.tsx`). A password sent with a file that isn't a PDF is dropped.
 - **Google access tokens** on disk, or any Google token in the browser. The refresh token stays encrypted on the server (`Infra/Gmail/GoogleTokenService.cs`).
@@ -272,9 +272,9 @@ Each of these is true of the code today. Keep the wording precise when adapting 
 
 1. Your statement files (PDF, CSV, OFX, QFX) are read in memory and never saved. PDF passwords are used once and never stored.
 2. Card and account numbers are masked. FinSight keeps at most the last four digits.
-3. Gmail access is read-only, and FinSight never downloads full email bodies.
+3. Gmail access is read-only. To find statements, FinSight reads only email headers and attachments, not the message body. Receipt matching, which you turn on yourself, is the one feature that reads an order email's body — only for emails it matches to a purchase.
 4. You can disconnect Gmail at any time, and FinSight revokes its access at Google.
-5. AI features never receive your PDFs, account numbers, or your Google name and email address.
+5. AI features never receive your PDFs, account numbers, or your Google name and email address. With receipt matching on, the AI reads the item lines of a matched order email after personal details are removed from it.
 6. Turn off AI categorization and AI insights in Settings, and none of your data is sent to Gemini.
 7. Your Gemini API key is stored encrypted and is never shown again, apart from its last four characters.
 8. Signing out ends your session on the server, not just in this browser.

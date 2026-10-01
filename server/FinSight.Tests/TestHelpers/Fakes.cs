@@ -40,6 +40,18 @@ internal sealed class FakeGeminiService : IGeminiService
 
     public Task<IReadOnlyList<RecurringReview>> DetectRecurringPatternsAsync(IReadOnlyList<RecurringReviewRequest> candidates, CancellationToken cancellationToken) =>
         Task.FromResult(ReviewRecurring(candidates));
+
+    /// <summary>Maps (merchant, redactedBody) to an extraction. Throws <see cref="AiUnavailableException"/> to exercise the link-only fallback.</summary>
+    public Func<string, string, FinSight.Core.Receipts.ReceiptExtraction> ExtractReceipt { get; set; } =
+        (_, _) => new FinSight.Core.Receipts.ReceiptExtraction(null, [], null);
+
+    public List<(string Merchant, string Body)> ReceiptCalls { get; } = [];
+
+    public Task<FinSight.Core.Receipts.ReceiptExtraction> ExtractReceiptAsync(string merchant, string redactedBody, CancellationToken cancellationToken)
+    {
+        ReceiptCalls.Add((merchant, redactedBody));
+        return Task.FromResult(ExtractReceipt(merchant, redactedBody));
+    }
 }
 
 /// <summary>A resolver that always returns the same Gemini key (or none).</summary>
@@ -132,6 +144,12 @@ internal sealed class FakeGmailClient : IGmailClient
         Attachments.TryGetValue((messageId, partId), out var bytes)
             ? Task.FromResult(bytes)
             : throw new FileNotFoundException("No such attachment.");
+
+    /// <summary>Scripted plain-text bodies by message id, for receipt matching tests.</summary>
+    public Dictionary<string, string> Bodies { get; } = [];
+
+    public Task<string> GetMessageBodyAsync(string accessToken, string messageId, CancellationToken cancellationToken) =>
+        Task.FromResult(Bodies.GetValueOrDefault(messageId, string.Empty));
 }
 
 /// <summary>

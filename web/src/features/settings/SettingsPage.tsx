@@ -269,6 +269,28 @@ function AutomationGroup({ email, showScan, gmailExpired }: { email: string; sho
             }
           />
         </Collapse>
+        <Collapse open={showScan}>
+          <Row
+            label="Match receipts from Gmail"
+            detail={
+              gmailExpired
+                ? 'Paused — reconnect Gmail to resume'
+                : 'After a scan, finds order emails (IKEA, Amazon, Uber…) and lists what you bought. Receipt text is stripped of personal details before AI reads it.'
+            }
+            control={
+              s ? (
+                <Switch
+                  label="Match receipts from Gmail"
+                  checked={s.receiptMatchingEnabled}
+                  disabled={gmailExpired && !s.receiptMatchingEnabled}
+                  onChange={(v) => change({ receiptMatchingEnabled: v })}
+                />
+              ) : (
+                <SwitchSkeleton />
+              )
+            }
+          />
+        </Collapse>
         <div className={ROW}>
           <RowText
             label="Monthly summary email"
@@ -462,7 +484,7 @@ export default function SettingsPage() {
           ? 'The AI sees totals and merchant names, never account numbers or your identity.'
           : isDemo
             ? 'AI isn’t configured on this server, so these have no effect yet.'
-            : 'Add a Gemini API key to turn these on. The AI never sees account numbers, email content or your identity.'
+            : 'Add a Gemini API key to turn these on. The AI never sees your account numbers or your identity.'
       }
     >
       {showKey && <GeminiKeyRow />}

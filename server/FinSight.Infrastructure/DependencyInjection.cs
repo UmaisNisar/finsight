@@ -73,6 +73,7 @@ public static class DependencyInjection
         services.AddScoped<CategorizationService>();
         services.AddScoped<StatementImportService>();
         services.AddScoped<StatementDiscoveryService>();
+        services.AddScoped<ReceiptMatchingService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<AnalysisService>();
         services.AddScoped<DemoDataService>();

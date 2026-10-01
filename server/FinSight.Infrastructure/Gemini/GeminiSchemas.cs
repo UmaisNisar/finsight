@@ -42,6 +42,18 @@ internal static class GeminiSchemas
         return schema;
     }
 
+    public static JsonObject ReceiptExtraction() => Obj(
+    [
+        ("orderNumber", Str("The order or confirmation number, if the email shows one. Omit otherwise."), false),
+        ("items", Arr(Obj(
+        [
+            ("name", Str("The product or line as written, e.g. 'BILLY bookcase, white'. No prices in the name."), true),
+            ("quantity", Num("Whole number. Omit when the email doesn't say."), false),
+            ("amount", Num("Line price in the order's currency, if shown. Omit otherwise."), false),
+        ])), true),
+        ("total", Num("The order total, if shown."), false),
+    ]);
+
     public static JsonObject MerchantCategorization() => Obj(
     [
         ("results", Arr(Obj(

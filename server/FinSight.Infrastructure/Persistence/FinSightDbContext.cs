@@ -19,6 +19,7 @@ public sealed class FinSightDbContext(
     public DbSet<CustomCategory> CustomCategories => Set<CustomCategory>();
     public DbSet<FinancialAnalysisRecord> FinancialAnalyses => Set<FinancialAnalysisRecord>();
     public DbSet<ProcessingJob> ProcessingJobs => Set<ProcessingJob>();
+    public DbSet<TransactionReceipt> TransactionReceipts => Set<TransactionReceipt>();
 
     // Referenced by query filters; EF evaluates these per context instance.
     private Guid CurrentUserId => userContext.UserId ?? Guid.Empty;
@@ -133,6 +134,19 @@ public sealed class FinSightDbContext(
             e.HasIndex(j => new { j.UserId, j.CreatedAt });
             e.HasOne<User>().WithMany().HasForeignKey(j => j.UserId).OnDelete(DeleteBehavior.Cascade);
             e.HasQueryFilter(j => IsSystem || j.UserId == CurrentUserId);
+        });
+
+        modelBuilder.Entity<TransactionReceipt>(e =>
+        {
+            // One receipt per transaction; deleting the transaction (e.g. a re-import) takes its receipt with it.
+            e.HasIndex(r => r.TransactionId).IsUnique();
+            e.HasOne<Transaction>().WithOne().HasForeignKey<TransactionReceipt>(r => r.TransactionId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(r => r.MessageId).HasMaxLength(64);
+            // The email's subject, order number and items are as sensitive as a transaction's description, so encrypted too.
+            e.Property(r => r.Subject).HasConversion(encrypted);
+            e.Property(r => r.OrderNumber).HasConversion(encrypted);
+            e.Property(r => r.ItemsJson).HasConversion(encrypted);
+            e.HasQueryFilter(r => IsSystem || r.UserId == CurrentUserId);
         });
     }
 

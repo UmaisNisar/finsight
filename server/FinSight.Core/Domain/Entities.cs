@@ -1,3 +1,5 @@
+using FinSight.Core.Receipts;
+
 namespace FinSight.Core.Domain;
 
 /// <summary>Marker for rows that belong to exactly one user. Ownership is enforced on every query.</summary>
@@ -66,6 +68,12 @@ public sealed class UserSettings
 
     /// <summary>Email a summary of the previous month early each month.</summary>
     public bool MonthlyDigestEnabled { get; set; }
+
+    /// <summary>
+    /// After a Gmail scan, match purchases (IKEA, Amazon, Uber…) to their order-confirmation emails and list what was
+    /// bought. Reads those receipt emails and sends the redacted item lines to the AI, so it is off until turned on.
+    /// </summary>
+    public bool ReceiptMatchingEnabled { get; set; }
 }
 
 /// <summary>
@@ -272,3 +280,36 @@ public sealed class ProcessingJob : IUserOwned
 
 /// <param name="Code">For a failed statement step, its stable failure code (see <c>StatementFailure</c>), so the UI can offer a fix.</param>
 public sealed record JobStep(string Key, string Label, StepStatus Status, string? Detail = null, string? Code = null);
+
+/// <summary>
+/// A purchase matched to its order-confirmation email in Gmail, with what was bought. The email itself is never
+/// stored: only the merchant's order number, the item lines and the total, all encrypted at rest like a transaction's
+/// description. The Gmail message id lets the UI deep-link back to the original email.
+/// </summary>
+public sealed class TransactionReceipt : IUserOwned
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid UserId { get; set; }
+    public Guid TransactionId { get; set; }
+
+    /// <summary>Gmail message id, for an "Open in Gmail" link. Not secret, but useless without the user's own session.</summary>
+    public required string MessageId { get; set; }
+
+    /// <summary>The email's subject line. Encrypted at rest.</summary>
+    public required string Subject { get; set; }
+
+    /// <summary>When the receipt email was received.</summary>
+    public DateOnly EmailDate { get; set; }
+
+    /// <summary>Merchant order/confirmation number, when the email had one (empty string when it didn't). Encrypted at rest.</summary>
+    public string OrderNumber { get; set; } = "";
+
+    /// <summary>Order total parsed from the email, in the transaction's currency.</summary>
+    public decimal? Total { get; set; }
+
+    /// <summary>JSON array of <c>ReceiptItem</c> (name, quantity, amount). Empty for a link-only match. Encrypted at rest.</summary>
+    public string ItemsJson { get; set; } = "[]";
+
+    public ReceiptSource Source { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}

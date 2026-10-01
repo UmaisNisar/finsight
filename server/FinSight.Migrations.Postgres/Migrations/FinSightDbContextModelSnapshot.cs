@@ -456,6 +456,55 @@ namespace FinSight.Migrations.Postgres.Migrations
                     b.ToTable("Transactions");
                 });
 
+            modelBuilder.Entity("FinSight.Core.Domain.TransactionReceipt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateOnly>("EmailDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("ItemsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("MessageId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("OrderNumber")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Source")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long?>("Total")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("TransactionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TransactionId")
+                        .IsUnique();
+
+                    b.ToTable("TransactionReceipts");
+                });
+
             modelBuilder.Entity("FinSight.Core.Domain.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -538,6 +587,9 @@ namespace FinSight.Migrations.Postgres.Migrations
                                 .HasColumnType("character varying(32)");
 
                             b1.Property<bool>("MonthlyDigestEnabled")
+                                .HasColumnType("boolean");
+
+                            b1.Property<bool>("ReceiptMatchingEnabled")
                                 .HasColumnType("boolean");
 
                             b1.Property<string>("Theme")
@@ -645,6 +697,15 @@ namespace FinSight.Migrations.Postgres.Migrations
                         .IsRequired();
 
                     b.Navigation("Statement");
+                });
+
+            modelBuilder.Entity("FinSight.Core.Domain.TransactionReceipt", b =>
+                {
+                    b.HasOne("FinSight.Core.Domain.Transaction", null)
+                        .WithOne()
+                        .HasForeignKey("FinSight.Core.Domain.TransactionReceipt", "TransactionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("FinSight.Core.Domain.UserSession", b =>

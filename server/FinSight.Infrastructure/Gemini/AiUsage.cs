@@ -34,6 +34,9 @@ public sealed class AiDailyLimits
     public int Analysis { get; set; } = 20;
 
     public int RecurringReview { get; set; } = 20;
+
+    /// <summary>One per matched receipt. A scan matches at most a few dozen, each a small redacted email.</summary>
+    public int ReceiptExtraction { get; set; } = 60;
 }
 
 public enum AiCallKind
@@ -41,6 +44,7 @@ public enum AiCallKind
     Categorization,
     Analysis,
     RecurringReview,
+    ReceiptExtraction,
 }
 
 public enum AiQuotaDecision
@@ -126,6 +130,7 @@ public sealed class AiQuota(IOptions<AiOptions> options, TimeProvider time)
     {
         AiCallKind.Categorization => limits.Categorization,
         AiCallKind.Analysis => limits.Analysis,
+        AiCallKind.ReceiptExtraction => limits.ReceiptExtraction,
         _ => limits.RecurringReview,
     };
 

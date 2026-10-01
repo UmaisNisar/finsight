@@ -14,6 +14,9 @@ public interface IGmailClient
     Task<EmailCandidate> GetMessageAsync(string accessToken, string messageId, CancellationToken cancellationToken);
 
     Task<byte[]> DownloadAttachmentAsync(string accessToken, string messageId, string partId, CancellationToken cancellationToken);
+
+    /// <summary>The message's text body, as plain text (HTML parts are stripped to text). Empty when it has no text part.</summary>
+    Task<string> GetMessageBodyAsync(string accessToken, string messageId, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -85,6 +88,29 @@ public sealed class GmailApiClient(HttpClient http) : IGmailClient
 
     private Task<Message> GetRawMessageAsync(string accessToken, string messageId, CancellationToken cancellationToken) =>
         SendAsync<Message>(accessToken, $"{Base}/messages/{Uri.EscapeDataString(messageId)}?format=full&fields={Uri.EscapeDataString(MessageFields)}", cancellationToken);
+
+    // Includes the inline body data of each part (not just attachments), for reading an order confirmation's text.
+    private static readonly string BodyFields =
+        "payload(mimeType,body(data),parts(mimeType,body(data),parts(mimeType,body(data),parts(mimeType,body(data)))))";
+
+    public async Task<string> GetMessageBodyAsync(string accessToken, string messageId, CancellationToken cancellationToken)
+    {
+        var message = await SendAsync<Message>(accessToken,
+            $"{Base}/messages/{Uri.EscapeDataString(messageId)}?format=full&fields={Uri.EscapeDataString(BodyFields)}", cancellationToken);
+
+        var parts = Flatten(message.Payload).ToList();
+        // Prefer a plain-text part; fall back to stripping the HTML one. Email clients send both for exactly this reason.
+        var plain = parts.FirstOrDefault(p => p.MimeType == "text/plain" && p.Body?.Data is not null);
+        if (plain is not null)
+        {
+            return HtmlToText.Decode(DecodeText(plain.Body!.Data!), alreadyText: true);
+        }
+
+        var html = parts.FirstOrDefault(p => p.MimeType == "text/html" && p.Body?.Data is not null);
+        return html is not null ? HtmlToText.Decode(DecodeText(html.Body!.Data!), alreadyText: false) : string.Empty;
+    }
+
+    private static string DecodeText(string data) => System.Text.Encoding.UTF8.GetString(DecodeBase64Url(data));
 
     private async Task<T> SendAsync<T>(string accessToken, string url, CancellationToken cancellationToken)
     {
@@ -163,7 +189,10 @@ public sealed class GmailApiClient(HttpClient http) : IGmailClient
 
     private sealed record Header([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("value")] string Value);
 
-    private sealed record PartBody([property: JsonPropertyName("size")] long Size, [property: JsonPropertyName("attachmentId")] string? AttachmentId);
+    private sealed record PartBody(
+        [property: JsonPropertyName("size")] long Size,
+        [property: JsonPropertyName("attachmentId")] string? AttachmentId,
+        [property: JsonPropertyName("data")] string? Data = null);
 
     private sealed record AttachmentBody([property: JsonPropertyName("data")] string? Data);
 }

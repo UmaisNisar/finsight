@@ -51,6 +51,13 @@ public interface IGeminiService
     Task<GeminiAnalysisResult> AnalyzeFinancialDataAsync(FinancialFacts facts, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<RecurringReview>> DetectRecurringPatternsAsync(IReadOnlyList<RecurringReviewRequest> candidates, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads the item lines out of a redacted receipt email. The body must already have personal details removed
+    /// (see <c>ReceiptRedactor</c>); this method sends it to the model as-is. Throws <see cref="AiUnavailableException"/>
+    /// when no key is configured or a limit is reached, so the caller can fall back to a link-only match.
+    /// </summary>
+    Task<FinSight.Core.Receipts.ReceiptExtraction> ExtractReceiptAsync(string merchant, string redactedBody, CancellationToken cancellationToken);
 }
 
 public enum AiFailure

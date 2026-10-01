@@ -1,4 +1,5 @@
 using FinSight.Core.Abstractions;
+using FinSight.Core.Receipts;
 using FinSight.Core.Insights;
 using Microsoft.Extensions.Logging;
 
@@ -82,6 +83,19 @@ public sealed partial class GeminiService(GeminiClient client, IGeminiKeyResolve
             ct), cancellationToken);
 
         return MerchantCategorizationValidator.ValidateRecurring(raw.Value, candidates);
+    }
+
+    public async Task<ReceiptExtraction> ExtractReceiptAsync(string merchant, string redactedBody, CancellationToken cancellationToken)
+    {
+        var raw = await CallAsync(AiCallKind.ReceiptExtraction, ct => client.GenerateAsync<RawReceiptExtraction>(
+            GeminiPrompts.ReceiptSystemInstruction,
+            GeminiPrompts.ReceiptPrompt(merchant, redactedBody),
+            GeminiSchemas.ReceiptExtraction(),
+            temperature: 0.1,
+            NoThinking,
+            ct), cancellationToken);
+
+        return ReceiptExtractionValidator.Validate(raw.Value);
     }
 
     private async Task<GeminiResult<T>> CallAsync<T>(AiCallKind kind, Func<CancellationToken, Task<GeminiResult<T>>> call, CancellationToken cancellationToken)

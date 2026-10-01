@@ -43,6 +43,8 @@ export const settingsSchema = z.object({
   /** Import new statements automatically, only for a bank and account already imported. Needs autoScanEnabled. */
   autoImportEnabled: z.boolean(),
   monthlyDigestEnabled: z.boolean(),
+  /** After a scan, match purchases to their Gmail receipts and list what was bought. Reads receipt emails; needs Gmail connected. */
+  receiptMatchingEnabled: z.boolean(),
   /** Read-only: whether the server can send email. Ignored when saving. */
   emailConfigured: z.boolean(),
 });
@@ -145,6 +147,23 @@ export const institutionSchema = z.object({
 
 export const transactionTypeSchema = z.enum(['income', 'expense', 'transfer']);
 
+export const receiptItemSchema = z.object({
+  name: z.string(),
+  quantity: z.number().nullable(),
+  amount: z.number().nullable(),
+});
+
+/** What was bought, matched from the order-confirmation email in Gmail. `items` is empty for a link-only match. */
+export const receiptSchema = z.object({
+  messageId: z.string(),
+  subject: z.string(),
+  emailDate: isoDate,
+  orderNumber: z.string().nullable(),
+  total: z.number().nullable(),
+  items: z.array(receiptItemSchema),
+  fromAi: z.boolean(),
+});
+
 export const transactionSchema = z.object({
   id: z.string(),
   statementId: z.string(),
@@ -165,6 +184,7 @@ export const transactionSchema = z.object({
   isExcluded: z.boolean(),
   isEdited: z.boolean(),
   account: z.object({ institution: z.string().nullable(), accountType: accountTypeSchema, mask: z.string().nullable() }),
+  receipt: receiptSchema.nullish(),
 });
 
 export const statementDetailSchema = z.object({
@@ -389,6 +409,7 @@ export type StatementStatus = z.infer<typeof statementStatusSchema>;
 export type Institution = z.infer<typeof institutionSchema>;
 export type StatementDetail = z.infer<typeof statementDetailSchema>;
 export type Transaction = z.infer<typeof transactionSchema>;
+export type Receipt = z.infer<typeof receiptSchema>;
 export type TransactionType = z.infer<typeof transactionTypeSchema>;
 export type TransactionPage = z.infer<typeof transactionPageSchema>;
 export type CategoryGroup = z.infer<typeof categoryGroupSchema>;

@@ -49,16 +49,19 @@ public sealed class AccountController(FinSightDbContext db) : ControllerBase
         // Automatic import only runs after automatic scans, so it turns off with them and starts off when they're turned back on.
         var autoImport = autoScan && (request.AutoImportEnabled ?? current.AutoImportEnabled);
         var digest = request.MonthlyDigestEnabled ?? current.MonthlyDigestEnabled;
+        var receiptMatching = request.ReceiptMatchingEnabled ?? current.ReceiptMatchingEnabled;
 
         // Only switching something on is checked, so an unrelated change still saves after Gmail expires or email is removed.
         var turningOnScan = autoScan && !current.AutoScanEnabled;
         var turningOnDigest = digest && !current.MonthlyDigestEnabled;
-        if ((turningOnScan || turningOnDigest) && user.IsDemo)
+        var turningOnReceipts = receiptMatching && !current.ReceiptMatchingEnabled;
+        if ((turningOnScan || turningOnDigest || turningOnReceipts) && user.IsDemo)
         {
-            return ApiErrors.Problem(StatusCodes.Status409Conflict, "demo_mode", "Automatic scans and summary emails aren't available in the demo.");
+            return ApiErrors.Problem(StatusCodes.Status409Conflict, "demo_mode", "Automatic scans, summary emails and receipt matching aren't available in the demo.");
         }
 
-        if (turningOnScan)
+        // Receipt matching reads the order-confirmation emails in Gmail, so it needs a live Gmail connection, like scans.
+        if (turningOnScan || turningOnReceipts)
         {
             var connection = await db.GmailConnections.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
             if (connection is null)
@@ -103,6 +106,7 @@ public sealed class AccountController(FinSightDbContext db) : ControllerBase
             AutoScanEnabled = autoScan,
             AutoImportEnabled = autoImport,
             MonthlyDigestEnabled = digest,
+            ReceiptMatchingEnabled = receiptMatching,
         };
         await db.SaveChangesAsync(cancellationToken);
         return user.Settings.ToDto(email.IsConfigured);
