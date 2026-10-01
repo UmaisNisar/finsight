@@ -26,12 +26,15 @@ public sealed partial class ReceiptMatchingService(
     IGeminiService gemini,
     ILogger<ReceiptMatchingService> logger)
 {
-    /// <summary>Order confirmations arrive around the charge: a little before (order placed) and a little after (it posts).</summary>
-    private static readonly int DaysBefore = 4;
+    /// <summary>
+    /// Order confirmations arrive around the charge, usually before it: the email fires when the order is placed, but a
+    /// card charge posts days later (it ships, or the bank batches it). So the window leans back further than it leans forward.
+    /// </summary>
+    private static readonly int DaysBefore = 10;
     private static readonly int DaysAfter = 3;
 
-    /// <summary>At most this many purchases are matched per scan, so one scan can't fan out into hundreds of Gmail reads.</summary>
-    private const int MaxPerRun = 40;
+    /// <summary>At most this many purchases are matched per scan, so one scan can't fan out into thousands of Gmail reads.</summary>
+    private const int MaxPerRun = 100;
 
     /// <summary>Candidate emails fetched per purchase before picking the best one.</summary>
     private const int CandidatesPerTransaction = 5;
@@ -40,7 +43,6 @@ public sealed partial class ReceiptMatchingService(
     {
         var eligible = transactions
             .Where(t => t.EffectiveType == TransactionType.Expense && ReceiptSenders.Knows(t.EffectiveMerchant))
-            .Take(MaxPerRun)
             .ToList();
         if (eligible.Count == 0)
         {
@@ -52,7 +54,13 @@ public sealed partial class ReceiptMatchingService(
             .Select(r => r.TransactionId)
             .ToListAsync(cancellationToken)).ToHashSet();
 
-        var toMatch = eligible.Where(t => !already.Contains(t.Id)).ToList();
+        // Cap AFTER dropping already-matched purchases, so each scan makes progress through new ones instead of
+        // re-chewing the same first MaxPerRun every time. Newest first: recent purchases are the ones a user looks at.
+        var toMatch = eligible
+            .Where(t => !already.Contains(t.Id))
+            .OrderByDescending(t => t.Date)
+            .Take(MaxPerRun)
+            .ToList();
         if (toMatch.Count == 0)
         {
             return new ReceiptMatchResult(0, 0);

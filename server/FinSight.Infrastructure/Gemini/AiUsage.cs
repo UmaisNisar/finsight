@@ -36,7 +36,7 @@ public sealed class AiDailyLimits
     public int RecurringReview { get; set; } = 20;
 
     /// <summary>One per matched receipt. A scan matches at most a few dozen, each a small redacted email.</summary>
-    public int ReceiptExtraction { get; set; } = 60;
+    public int ReceiptExtraction { get; set; } = 150;
 }
 
 public enum AiCallKind
